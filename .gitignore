@@ -1,0 +1,4 @@
+eigen*
+*.so
+*.o
+*.pyc
