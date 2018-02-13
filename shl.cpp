@@ -1,7 +1,5 @@
 #include <stdio.h>
 
-typedef unsigned int ui32;
-
 #ifdef SHL_DLL
 	#ifdef SHL_EXPORTS
 		#define SHL_API __declspec(dllexport)
@@ -23,10 +21,16 @@ extern "C" {
 }
 
 
+#include <iostream>
 
 #include <Eigen/Dense>
 
-#include <iostream>
+using ui32 = unsigned int;
+
+template <int nrows, int ncols>
+using TMatrix = Eigen::Matrix<float, nrows, ncols>;
+
+using TMatrixD = TMatrix<Eigen::Dynamic, Eigen::Dynamic>;
 
 
 struct LayerConfig {
@@ -44,13 +48,10 @@ struct Matrix {
   	ui32 ncols;
 };
 
-
-
-
 void run_model(Config config, Matrix m) {
 	std::cout << config.layer_num << " " << m.nrows << "x" << m.ncols << "\n";
 
-	Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic> d;
+	TMatrixD mmm;	
 
 	for (ui32 i=0; i<m.nrows; ++i) {
 		for (ui32 j=0; j<m.ncols; ++j) {

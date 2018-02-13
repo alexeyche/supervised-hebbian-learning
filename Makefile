@@ -1,10 +1,10 @@
 all: shl
 
 shl: shl.o
-	g++ -Wall shl.o -o libshl.so -shared 
+	clang++ -Wall shl.o -o libshl.so -shared 
 
 shl.o: shl.cpp
-	g++ -Ieigen -c shl.cpp -fPIC
+	clang++ -Ieigen -std=c++14 -o3 -c shl.cpp -o shl.o -fPIC 
 
 clean:
 	rm -rf *.o libshl.so
