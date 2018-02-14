@@ -5,6 +5,7 @@ import ctypes as ct
 from binding import Config, MatrixFlat, Stat
 from binding import run_model, get_structure_info
 from util import *
+from datasets import XorDataset, to_sparse_ts
 
 def xavier_init(fan_in, fan_out, const=0.5):
     low = -const * np.sqrt(6.0 / (fan_in + fan_out))
@@ -34,13 +35,18 @@ c.F1 = MatrixFlat.from_np(F1)
 
 
 
-input_data = np.zeros((batch_size, seq_length, input_size)).astype(np.float32)
-input_data[0,5,0] = 1.0
-input_data[0,5,1] = 1.0
+ds = XorDataset()
+x, y = ds.next_train_batch()
+xt = to_sparse_ts(x, seq_length, at=5, filter_size=seq_length-1).astype(np.float32)
+yt = to_sparse_ts(y, seq_length, at=5, filter_size=seq_length-1).astype(np.float32)
+
+xt = np.transpose(xt, (1, 0, 2))
+yt = np.transpose(yt, (1, 0, 2))
 
 s = run_model(
 	c,
-	input_data
+	xt,
+	yt
 )
 
 dd = s.Input

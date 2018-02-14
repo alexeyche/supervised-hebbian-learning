@@ -59,6 +59,11 @@ class Structure(ct.Structure):
         ("SeqLength", ct.c_int),
     ]
 
+class Input(ct.Structure):
+    _fields_ = [
+        ("TrainInput", MatrixFlat),
+        ("TrainOutput", MatrixFlat),
+    ]
 
 
 class Stat(ct.Structure):
@@ -100,7 +105,7 @@ _shllib = np.ctypeslib.load_library('libshl', lib_dir)
 _shllib.run_model.restype = ct.c_int
 _shllib.run_model.argtypes = [
     Config,
-    MatrixFlat,
+    Input,
     Stat
 ]
 
@@ -109,7 +114,7 @@ _shllib.get_structure_info.restype = Structure
 def get_structure_info():
     return _shllib.get_structure_info()
 
-def run_model(config, data):
+def run_model(config, train_input, train_output):
     struc_info = get_structure_info()
 
     input_size = struc_info.InputSize
@@ -122,11 +127,13 @@ def run_model(config, data):
     stat = Stat.alloc()
     statFlat = Stat.from_np(stat)
 
-    dataFlat = MatrixFlat.from_np(data)
+    inp = Input() 
+    inp.TrainInput = MatrixFlat.from_np(train_input)
+    inp.TrainOutput = MatrixFlat.from_np(train_output)
 
     retcode = _shllib.run_model(
         config,
-        dataFlat,
+        inp,
         statFlat
     )
     if retcode != 0:

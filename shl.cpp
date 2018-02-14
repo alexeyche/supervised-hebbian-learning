@@ -14,6 +14,7 @@ struct TLayerConfig;
 struct TConfig;
 struct TMatrixFlat;
 struct TStatFlat;
+struct TInputFlat;
 
 struct TStructure {
 	int InputSize;
@@ -27,7 +28,7 @@ struct TStructure {
 
 extern "C" {
 	
-	SHL_API int run_model(TConfig c, TMatrixFlat inputSeqFlat, TStatFlat stat);
+	SHL_API int run_model(TConfig c, TInputFlat inputFlat, TStatFlat stat);
 	SHL_API TStructure get_structure_info();
 }
 
@@ -85,9 +86,14 @@ struct TStatFlat {
 	TMatrixFlat Output;
 };
 
-static constexpr int InputSize = 4;
+struct TInputFlat {
+	TMatrixFlat TrainInput;
+	TMatrixFlat TrainOutput;
+};
+
+static constexpr int InputSize = 2;
 static constexpr int LayerSize = 25;
-static constexpr int OutputSize = 2;
+static constexpr int OutputSize = 1;
 static constexpr int BatchSize = 4;
 static constexpr int LayersNum = 1;
 static constexpr int SeqLength = 25;
@@ -129,16 +135,32 @@ struct TStat {
 	}
 };
 
-
-void run_model_impl(TConfig c, TMatrixFlat inputSeqFlat, TStatFlat statFlat) {
-	ENSURE(inputSeqFlat.NRows == BatchSize, 
-		"Batch size is expected to be " << BatchSize << ", not: `" << inputSeqFlat.NRows << "`");
-	ENSURE(inputSeqFlat.NCols == InputSize*SeqLength, 
-		"Input number of columns is expected to be " << InputSize*SeqLength << ", not: `" << inputSeqFlat.NCols << "`");
-
-	TMatrix<BatchSize, InputSize*SeqLength> inputSeq = \
-		TMatrixFlat::ToEigen<BatchSize, InputSize*SeqLength>(inputSeqFlat);
+struct TInput {
+	TMatrix<BatchSize, InputSize*SeqLength> TrainInput;
+	TMatrix<BatchSize, OutputSize*SeqLength> TrainOutput;
 	
+	static TInput FromFlat(TInputFlat s) {
+		ENSURE(s.TrainInput.NRows == BatchSize, 
+			"Batch size is expected to be " << BatchSize << ", not: `" << s.TrainInput.NRows << "`");
+		ENSURE(s.TrainInput.NCols == InputSize*SeqLength, 
+			"Input number of columns is expected to be " << InputSize*SeqLength << ", not: `" << s.TrainInput.NCols << "`");
+
+
+		TInput o;
+		o.TrainInput = TMatrixFlat::ToEigen<BatchSize, InputSize*SeqLength>(s.TrainInput);
+		o.TrainOutput = TMatrixFlat::ToEigen<BatchSize, OutputSize*SeqLength>(s.TrainOutput);
+		return o;
+	}
+
+	static void ToFlat(TInput s, TInputFlat* f) {
+		TMatrixFlat::FromEigen(s.TrainInput, &f->TrainInput);
+		TMatrixFlat::FromEigen(s.TrainOutput, &f->TrainOutput);
+	}
+};
+
+
+void run_model_impl(TConfig c, TInputFlat inputFlat, TStatFlat statFlat) {
+	TInput input = TInput::FromFlat(inputFlat);
 	TStat stat = TStat::FromFlat(statFlat);
 
 	TMatrix<InputSize, LayerSize> F0 = \
@@ -153,12 +175,13 @@ void run_model_impl(TConfig c, TMatrixFlat inputSeqFlat, TStatFlat statFlat) {
 
 
 	for (ui32 t=0; t<SeqLength; ++t) {
-		TMatrix<BatchSize, InputSize> x = \
-			inputSeq.block<BatchSize, InputSize>(0, t*InputSize);
+		TMatrix<BatchSize, InputSize> x = input.TrainInput.block<BatchSize, InputSize>(0, t*InputSize);
 
 		inputSpikesState += c.Dt * (x - inputSpikesState) / c.SynTau;
 
 		TMatrix<BatchSize, LayerSize> u = inputSpikesState * F0;
+		// layerState += c.Dt * (u - layerState) / c.SynTau;
+
 		TMatrix<BatchSize, LayerSize> a = Act(u);
 
 		TMatrix<BatchSize, OutputSize> uo = a * F1;
@@ -173,9 +196,9 @@ void run_model_impl(TConfig c, TMatrixFlat inputSeqFlat, TStatFlat statFlat) {
 	TStat::ToFlat(stat, &statFlat);
 }
 
-int run_model(TConfig c, TMatrixFlat inputSeqFlat, TStatFlat stat) {
+int run_model(TConfig c, TInputFlat inputFlat, TStatFlat stat) {
 	try {
-		run_model_impl(c, inputSeqFlat, stat);
+		run_model_impl(c, inputFlat, stat);
 		return 0;
 	} catch (const std::exception& e) {
 		std::cerr << e.what() << "\n";
