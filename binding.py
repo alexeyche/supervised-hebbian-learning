@@ -47,6 +47,7 @@ class Config(ct.Structure):
         ("F1", MatrixFlat),
         ("Dt", ct.c_double),
         ("SynTau", ct.c_double),
+        ("FbFactor", ct.c_double),
     ]
 
 class Structure(ct.Structure):
@@ -63,6 +64,8 @@ class Input(ct.Structure):
     _fields_ = [
         ("TrainInput", MatrixFlat),
         ("TrainOutput", MatrixFlat),
+        ("TestInput", MatrixFlat),
+        ("TestOutput", MatrixFlat),
     ]
 
 
@@ -72,6 +75,7 @@ class Stat(ct.Structure):
         ("U", MatrixFlat),
         ("A", MatrixFlat),
         ("Output", MatrixFlat),
+        ("De", MatrixFlat),
     ]
 
     
@@ -86,6 +90,7 @@ class Stat(ct.Structure):
             "U": (struc_info.BatchSize, struc_info.SeqLength, struc_info.LayerSize),
             "A": (struc_info.BatchSize, struc_info.SeqLength, struc_info.LayerSize),
             "Output": (struc_info.BatchSize, struc_info.SeqLength, struc_info.OutputSize),
+            "De": (struc_info.BatchSize, struc_info.SeqLength, struc_info.OutputSize),
         }
         o = Stat.Np()
         for fname, _ in Stat._fields_:
@@ -114,7 +119,7 @@ _shllib.get_structure_info.restype = Structure
 def get_structure_info():
     return _shllib.get_structure_info()
 
-def run_model(config, train_input, train_output):
+def run_model(config, train_input, train_output, test_input, test_output):
     struc_info = get_structure_info()
 
     input_size = struc_info.InputSize
@@ -130,6 +135,8 @@ def run_model(config, train_input, train_output):
     inp = Input() 
     inp.TrainInput = MatrixFlat.from_np(train_input)
     inp.TrainOutput = MatrixFlat.from_np(train_output)
+    inp.TestInput = MatrixFlat.from_np(test_input)
+    inp.TestOutput = MatrixFlat.from_np(test_output)
 
     retcode = _shllib.run_model(
         config,
