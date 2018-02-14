@@ -20,6 +20,13 @@ class MatrixFlat(ct.Structure):
         o = MatrixFlat()
         assert m.dtype == np.float32, "Need float32 matrix"
         
+        if len(m.shape) == 3:
+            m = m.reshape((m.shape[0], m.shape[1]*m.shape[2]))
+        elif len(m.shape) == 2:
+            pass
+        else:
+            raise Exception("Can't deal with shape more that 3 dimensions")
+
         o.Data = m.ctypes.data_as(c_float_p)
         o.NRows = m.shape[0]
         o.NCols = m.shape[1]
@@ -37,6 +44,7 @@ class MatrixFlat(ct.Structure):
 class Config(ct.Structure):
     _fields_ = [
         ("F0", MatrixFlat),
+        ("F1", MatrixFlat),
         ("Dt", ct.c_double),
         ("SynTau", ct.c_double),
     ]
@@ -53,6 +61,39 @@ class Structure(ct.Structure):
 
 
 
+class Stat(ct.Structure):
+    _fields_ = [
+        ("Input", MatrixFlat),
+        ("U", MatrixFlat),
+        ("A", MatrixFlat),
+        ("Output", MatrixFlat),
+    ]
+
+    
+    class Np(object):
+        pass
+
+    @staticmethod
+    def alloc():
+        struc_info = get_structure_info()
+        size = {
+            "Input": (struc_info.BatchSize, struc_info.SeqLength, struc_info.InputSize),
+            "U": (struc_info.BatchSize, struc_info.SeqLength, struc_info.LayerSize),
+            "A": (struc_info.BatchSize, struc_info.SeqLength, struc_info.LayerSize),
+            "Output": (struc_info.BatchSize, struc_info.SeqLength, struc_info.OutputSize),
+        }
+        o = Stat.Np()
+        for fname, _ in Stat._fields_:
+            s = size[fname]
+            setattr(o, fname, np.zeros(s, dtype=np.float32))
+        return o
+
+    @staticmethod
+    def from_np(s):
+        r = Stat()
+        for fname, _ in Stat._fields_:
+            setattr(r, fname, MatrixFlat.from_np(getattr(s, fname)))
+        return r
 
 _shllib = np.ctypeslib.load_library('libshl', lib_dir)
 
@@ -60,7 +101,7 @@ _shllib.run_model.restype = ct.c_int
 _shllib.run_model.argtypes = [
     Config,
     MatrixFlat,
-    MatrixFlat
+    Stat
 ]
 
 _shllib.get_structure_info.restype = Structure
@@ -78,17 +119,16 @@ def run_model(config, data):
     layers_num = struc_info.LayersNum
     seq_length = struc_info.SeqLength
 
+    stat = Stat.alloc()
+    statFlat = Stat.from_np(stat)
 
-    outStat = np.zeros((batch_size, input_size*seq_length), dtype=np.float32)
-
-    outStatFlat = MatrixFlat.from_np(outStat)
     dataFlat = MatrixFlat.from_np(data)
 
     retcode = _shllib.run_model(
         config,
         dataFlat,
-        outStatFlat
+        statFlat
     )
     if retcode != 0:
         raise Exception("Bad return code")
-    return outStat
+    return stat
