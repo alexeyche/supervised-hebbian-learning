@@ -50,7 +50,7 @@ extern "C" {
 using ui32 = unsigned int;
 
 template <int nrows, int ncols>
-using TMatrix = Eigen::Matrix<float, nrows, ncols>;
+using TMatrix = Eigen::Matrix<float, nrows, ncols, Eigen::RowMajor>;
 
 using TMatrixD = TMatrix<Eigen::Dynamic, Eigen::Dynamic>;
 
@@ -59,6 +59,21 @@ struct TMatrixFlat {
   	float* Data;
   	ui32 NRows; 
   	ui32 NCols;
+
+  	template <int NRows, int NCols>
+  	static TMatrix<NRows, NCols> ToEigen(TMatrixFlat flat) {
+  		return Eigen::Map<TMatrix<NRows, NCols>>(
+  			flat.Data, flat.NRows, flat.NCols
+  		);
+  	}
+
+  	template <int NRows, int NCols>
+  	static void FromEigen(TMatrix<NRows, NCols> m, TMatrixFlat* dst) {
+  		ENSURE(NRows == dst->NRows, "Rows are not aligned for saving eigen matrix");
+  		ENSURE(NCols == dst->NCols, "Cols are not aligned for saving eigen matrix");
+
+  		memcpy(dst->Data, m.data(), sizeof(float) * NRows * NCols);
+  	}
 };
 
 
@@ -83,23 +98,19 @@ void run_model_impl(TConfig c, TMatrixFlat inputSeqFlat, TMatrixFlat outStatFlat
 	ENSURE(inputSeqFlat.NCols == InputSize*SeqLength, 
 		"Input number of columns is expected to be " << InputSize*SeqLength << ", not: `" << inputSeqFlat.NCols << "`");
 
+	TMatrix<BatchSize, InputSize*SeqLength> inputSeq = \
+		TMatrixFlat::ToEigen<BatchSize, InputSize*SeqLength>(inputSeqFlat);
+	
+	TMatrix<BatchSize, InputSize*SeqLength> outStat = \
+		TMatrixFlat::ToEigen<BatchSize, InputSize*SeqLength>(outStatFlat);
 
-	TMatrix<BatchSize, InputSize*SeqLength> inputSeq = Eigen::Map<
-		TMatrix<BatchSize, InputSize*SeqLength>
-	>(inputSeqFlat.Data, inputSeqFlat.NRows, inputSeqFlat.NCols);
-
-
-	TMatrix<BatchSize, InputSize*SeqLength> outStat = Eigen::Map<
-		TMatrix<BatchSize, InputSize*SeqLength>
-	>(outStatFlat.Data, outStatFlat.NRows, outStatFlat.NCols);
-
-	TMatrix<InputSize, LayerSize> F0 = Eigen::Map<
-		TMatrix<InputSize, LayerSize>
-	>(c.F0.Data, c.F0.NRows, c.F0.NCols);
-
-
-	TMatrix<BatchSize, InputSize> inputSpikesState = TMatrix<BatchSize, InputSize>::Zero();
-	TMatrix<BatchSize, LayerSize> layerState = TMatrix<BatchSize, LayerSize>::Zero();
+	TMatrix<InputSize, LayerSize> F0 = \
+		TMatrixFlat::ToEigen<InputSize, LayerSize>(c.F0);
+		
+	TMatrix<BatchSize, InputSize> inputSpikesState = \
+		TMatrix<BatchSize, InputSize>::Zero();
+	TMatrix<BatchSize, LayerSize> layerState = \
+		TMatrix<BatchSize, LayerSize>::Zero();
 
 
 	for (ui32 t=0; t<SeqLength; ++t) {
@@ -111,11 +122,7 @@ void run_model_impl(TConfig c, TMatrixFlat inputSeqFlat, TMatrixFlat outStatFlat
 		outStat.block<BatchSize, InputSize>(0, t*InputSize) = inputSpikesState;
 	}
 
-	for (ui32 i=0; i<outStatFlat.NRows; ++i) {
-		for (ui32 j=0; j<outStatFlat.NCols; ++j) {
-			outStatFlat.Data[i * outStatFlat.NCols + j] = outStat(i, j);
-		}
-	}
+	TMatrixFlat::FromEigen(outStat, &outStatFlat);
 }
 
 int run_model(TConfig c, TMatrixFlat inputSeqFlat, TMatrixFlat outStatFlat) {

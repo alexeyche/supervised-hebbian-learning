@@ -44,3 +44,5 @@ s = run_model(
 )
 
 dd = s.reshape((batch_size, seq_length, input_size))
+
+shl(dd[0, :, 0], dd[0, :, 1])
