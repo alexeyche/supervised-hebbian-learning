@@ -13,8 +13,11 @@
 struct TLayerConfig;
 struct TConfig;
 struct TMatrixFlat;
-struct TStatFlat;
-struct TInputFlat;
+struct TStatisticsFlat;
+struct TDataFlat;
+struct TStateFlat;
+
+using ui32 = unsigned int;
 
 struct TStructure {
 	int InputSize;
@@ -28,10 +31,20 @@ struct TStructure {
 
 extern "C" {
 	
-	SHL_API int run_model(TConfig c, TInputFlat inputFlat, TStatFlat stat);
+	SHL_API int run_model(
+		ui32 epochs,
+		TConfig c,
+		TStateFlat trainState,
+		TStateFlat testState,
+		TDataFlat trainDataFlat, 
+		TDataFlat testDataFlat, 
+		TStatisticsFlat trainStatFlat, 
+		TStatisticsFlat testStatFlat
+	);
 	SHL_API TStructure get_structure_info();
 }
 
+// #define EIGEN_USE_BLAS = 1
 
 #include <iostream>
 #include <tuple>
@@ -49,7 +62,6 @@ extern "C" {
     }\
 
 
-using ui32 = unsigned int;
 
 template <int nrows, int ncols>
 using TMatrix = Eigen::Matrix<float, nrows, ncols, Eigen::RowMajor>;
@@ -82,31 +94,36 @@ struct TMatrixFlat {
 };
 
 
-struct TStatFlat {
+struct TStatisticsFlat {
 	TMatrixFlat Input;
 	TMatrixFlat U;
 	TMatrixFlat A;
 	TMatrixFlat Output;
 	TMatrixFlat De;
+	TMatrixFlat dF0;
 };
 
-struct TInputFlat {
-	TMatrixFlat TrainInput;
-	TMatrixFlat TrainOutput;
-	TMatrixFlat TestInput;
-	TMatrixFlat TestOutput;
+struct TDataFlat {
+	TMatrixFlat Input;
+	TMatrixFlat Output;
 };
 
-static constexpr int InputSize = 2;
-static constexpr int LayerSize = 25;
+struct TStateFlat {
+	TMatrixFlat A0m;
+	TMatrixFlat dF0;
+};
+
+
+static constexpr int InputSize = 3;
+static constexpr int LayerSize = 10;
 static constexpr int OutputSize = 2;
 static constexpr int BatchSize = 4;
 static constexpr int LayersNum = 1;
-static constexpr int SeqLength = 100;
+static constexpr int SeqLength = 50;
 
 template <int NRows, int NCols>
 TMatrix<NRows, NCols> Act(TMatrix<NRows, NCols> x) {
-	return x.cwiseMax(0.0);
+	return x.cwiseMax(0.0); //.cwiseMin(1.0);
 }
 
 
@@ -114,132 +131,201 @@ struct TConfig {
 	TMatrixFlat F0;
 	TMatrixFlat F1;
 	double Dt;
- 	double SynTau;
+ 	double TauSyn;
+ 	double TauMean;
  	double FbFactor;
+ 	double LearningRate;
+ 	double Lambda;
 };
 
-struct TInput {
+
+
+struct TData {
 	TMatrix<BatchSize, InputSize*SeqLength> Input;
 	TMatrix<BatchSize, OutputSize*SeqLength> Output;
 
-	static TInput FromFlat(TInputFlat s) {
+	static TData FromFlat(TDataFlat s) {
 		ENSURE(s.Input.NRows == BatchSize, 
 			"Batch size is expected to be " << BatchSize << ", not: `" << s.Input.NRows << "`");
 		ENSURE(s.Input.NCols == InputSize*SeqLength, 
 			"Input number of columns is expected to be " << InputSize*SeqLength << ", not: `" << s.Input.NCols << "`");
 
+		ENSURE(s.Output.NRows == BatchSize, 
+			"Batch size is expected to be " << BatchSize << ", not: `" << s.Output.NRows << "`");
+		ENSURE(s.Output.NCols == OutputSize*SeqLength, 
+			"Input number of columns is expected to be " << OutputSize*SeqLength << ", not: `" << s.Output.NCols << "`");
 
-		TInput o;
+		TData o;
 		o.Input = TMatrixFlat::ToEigen<BatchSize, InputSize*SeqLength>(s.Input);
 		o.Output = TMatrixFlat::ToEigen<BatchSize, OutputSize*SeqLength>(s.Output);
 		return o;
 	}
 
-	static void ToFlat(TInput s, TInputFlat* f) {
+	static void ToFlat(TData s, TDataFlat* f) {
 		TMatrixFlat::FromEigen(s.Input, &f->Input);
 		TMatrixFlat::FromEigen(s.Output, &f->Output);
 	}
 };
 
 
-struct TStat {
+struct TStatistics {
 	TMatrix<BatchSize, InputSize*SeqLength> Input;
 	TMatrix<BatchSize, LayerSize*SeqLength> U;
 	TMatrix<BatchSize, LayerSize*SeqLength> A;
 	TMatrix<BatchSize, OutputSize*SeqLength> Output;
 	TMatrix<BatchSize, OutputSize*SeqLength> De;
+	TMatrix<SeqLength, InputSize*LayerSize> dF0;
 	
-	static TStat FromFlat(TStatFlat s) {
-		TStat o;
+	static TStatistics FromFlat(TStatisticsFlat s) {
+		TStatistics o;
 		o.Input = TMatrixFlat::ToEigen<BatchSize, InputSize*SeqLength>(s.Input);
 		o.U = TMatrixFlat::ToEigen<BatchSize, LayerSize*SeqLength>(s.U);
 		o.A = TMatrixFlat::ToEigen<BatchSize, LayerSize*SeqLength>(s.A);
 		o.Output = TMatrixFlat::ToEigen<BatchSize, OutputSize*SeqLength>(s.Output);
 		o.De = TMatrixFlat::ToEigen<BatchSize, OutputSize*SeqLength>(s.De);
+		o.dF0 = TMatrixFlat::ToEigen<SeqLength, InputSize*LayerSize>(s.dF0);
 		return o;
 	}
 
-	static void ToFlat(TStat s, TStatFlat* f) {
+	static void ToFlat(TStatistics s, TStatisticsFlat* f) {
 		TMatrixFlat::FromEigen(s.Input, &f->Input);
 		TMatrixFlat::FromEigen(s.U, &f->U);
 		TMatrixFlat::FromEigen(s.A, &f->A);
 		TMatrixFlat::FromEigen(s.Output, &f->Output);
 		TMatrixFlat::FromEigen(s.De, &f->De);
+		TMatrixFlat::FromEigen(s.dF0, &f->dF0);
 	}
 };
 
 
+struct TState {
+	TMatrix<BatchSize, LayerSize> A0m;
+	TMatrix<InputSize, LayerSize> dF0;
+	
+	static TState FromFlat(TStateFlat s) {
+		TState o;
+		o.A0m = TMatrixFlat::ToEigen<BatchSize, LayerSize>(s.A0m);
+		o.dF0 = TMatrixFlat::ToEigen<InputSize, LayerSize>(s.dF0);
+		return o;
+	}
+
+	static void ToFlat(TState s, TStateFlat* f) {
+		TMatrixFlat::FromEigen(s.A0m, &f->A0m);
+		TMatrixFlat::FromEigen(s.dF0, &f->dF0);
+	}
+};
+
+
+
 void run_model_impl(
 	TConfig c, 
-	TInputFlat trainInputFlat, 
-	TInputFlat testInputFlat, 
-	TStatFlat trainStatFlat, 
-	TStatFlat testStatFlat
+	TStateFlat sf,
+	TDataFlat dataFlat, 
+	TStatisticsFlat statsFlat,
+	double fbFactor,
+	bool learn
 ) {
-	TInput trainInput = TInput::FromFlat(trainInputFlat);
-	TInput testInput = TInput::FromFlat(testInputFlat);
-
-	TStat trainStat = TStat::FromFlat(trainStatFlat);
-	TStat testStat = TStat::FromFlat(testStatFlat);
+	TData data = TData::FromFlat(dataFlat);
+	TStatistics stats = TStatistics::FromFlat(statsFlat);
+	TState s = TState::FromFlat(sf);
 
 	TMatrix<InputSize, LayerSize> F0 = \
 		TMatrixFlat::ToEigen<InputSize, LayerSize>(c.F0);
 	TMatrix<LayerSize, OutputSize> F1 = \
 		TMatrixFlat::ToEigen<LayerSize, OutputSize>(c.F1);
 		
-	TMatrix<BatchSize, InputSize> trainInputSpikesState = \
-		TMatrix<BatchSize, InputSize>::Zero();
-	TMatrix<BatchSize, InputSize> testInputSpikesState = \
+	TMatrix<BatchSize, InputSize> inputSpikesState = \
 		TMatrix<BatchSize, InputSize>::Zero();
 
-	// TMatrix<BatchSize, LayerSize> layerState = \
-	// 	TMatrix<BatchSize, LayerSize>::Zero();
+	TMatrix<BatchSize, LayerSize> u = \
+		TMatrix<BatchSize, LayerSize>::Zero();
 
-	TMatrix<BatchSize, OutputSize> trainDe = TMatrix<BatchSize, OutputSize>::Zero();
-	TMatrix<BatchSize, OutputSize> testDe = TMatrix<BatchSize, OutputSize>::Zero();
+	TMatrix<BatchSize, OutputSize> de = TMatrix<BatchSize, OutputSize>::Zero();
+	
+	s.dF0 = TMatrix<InputSize, LayerSize>::Zero();
 
 	for (ui32 t=0; t<SeqLength; ++t) {
-		TMatrix<BatchSize, InputSize> x = input.TrainInput.block<BatchSize, InputSize>(0, t*InputSize);
+		TMatrix<BatchSize, InputSize> x = data.Input.block<BatchSize, InputSize>(0, t*InputSize);
 
-		inputSpikesState += c.Dt * (x - inputSpikesState) / c.SynTau;
+		inputSpikesState += c.Dt * (x - inputSpikesState) / c.TauSyn;
 
-		TMatrix<BatchSize, LayerSize> u = inputSpikesState * F0 + c.FbFactor * de * F1.transpose();
-		// layerState += c.Dt * (u - layerState) / c.SynTau;
+		TMatrix<BatchSize, LayerSize> du = \
+			(inputSpikesState * F0 - u) + \
+			(fbFactor * de * F1.transpose() - u);
+		
+		u += c.Dt * du / c.TauSyn;
 
-		TMatrix<BatchSize, LayerSize> a = Act(u);
+		// layerState += c.Dt * (u - layerState) / c.TauSyn;
 
-		TMatrix<BatchSize, OutputSize> uo = a * F1;
+		TMatrix<BatchSize, LayerSize> A0 = Act(u);
+
+		TMatrix<BatchSize, OutputSize> uo = A0 * F1;
 
 		TMatrix<BatchSize, OutputSize> uo_t = \
-			input.TrainOutput.block<BatchSize, OutputSize>(0, t*OutputSize);
+			data.Output.block<BatchSize, OutputSize>(0, t*OutputSize);
 
 		de = uo_t - uo;
 
+		TMatrix<InputSize, LayerSize> dF0t = \
+			inputSpikesState.transpose() * A0;
+		
+		// TMatrix<InputSize, LayerSize> dF0t = \
+		// 	inputSpikesState.transpose() * (A0.array() * (A0.array() - c.Lambda).sign()).matrix();
+		
+		// TMatrix<InputSize, LayerSize> dF0t = \
+		// 	inputSpikesState.transpose() * (A0.array() * (A0.array() - s.A0m.array()).sign()).matrix();
 
-		stat.Input.block<BatchSize, InputSize>(0, t*InputSize) = inputSpikesState;
-		stat.U.block<BatchSize, LayerSize>(0, t*LayerSize) = u;
-		stat.A.block<BatchSize, LayerSize>(0, t*LayerSize) = a;
-		stat.Output.block<BatchSize, OutputSize>(0, t*OutputSize) = uo;
-		stat.De.block<BatchSize, OutputSize>(0, t*OutputSize) = de;
+		// TMatrix<InputSize, LayerSize> dF0t = \
+			// (inputSpikesState.transpose() * A0) - (c.Lambda * F0.array()).matrix();
+
+		// TMatrix<InputSize, LayerSize> dF0t = \
+			// ((inputSpikesState - A0 * F0.transpose()).transpose() * A0);
+		// TMatrix<InputSize, LayerSize> dF0t = \
+		// 	(inputSpikesState.transpose() * (a.array() - 0.02).matrix());
+
+
+		s.dF0 += dF0t / SeqLength;
+
+		s.A0m += (A0 - s.A0m)/c.TauMean;
+
+		stats.Input.block<BatchSize, InputSize>(0, t*InputSize) = inputSpikesState;
+		stats.U.block<BatchSize, LayerSize>(0, t*LayerSize) = u;
+		stats.A.block<BatchSize, LayerSize>(0, t*LayerSize) = A0;
+		stats.Output.block<BatchSize, OutputSize>(0, t*OutputSize) = uo;
+		stats.De.block<BatchSize, OutputSize>(0, t*OutputSize) = de;
+		stats.dF0.row(t) = Eigen::Map<TMatrix<1, InputSize*LayerSize>>(dF0t.data());
 	}
+	
+	// if (learn) {
+	// 	F0 += c.LearningRate * s.dF0;
+	// 	// F0 = (F0.array().rowwise())/(F0.colwise().lpNorm<2>().array());
+	// }
 
-	TStat::ToFlat(stat, &statFlat);
+	TMatrixFlat::FromEigen(F0, &c.F0);
+	TStatistics::ToFlat(stats, &statsFlat);
+	TState::ToFlat(s, &sf);
 }
 
 int run_model(
+	ui32 epochs,
 	TConfig c, 
-	TInputFlat trainInputFlat, 
-	TInputFlat testInputFlat, 
-	TStatFlat trainStatFlat, 
-	TStatFlat testStatFlat
+	TStateFlat trainState,
+	TStateFlat testState,
+	TDataFlat trainDataFlat, 
+	TDataFlat testDataFlat, 
+	TStatisticsFlat trainStatFlat, 
+	TStatisticsFlat testStatFlat
 ) {
-	try {
-		run_model_impl(c, trainInputFlat, testInputFlat, trainStatFlat, testStatFlat);
-		return 0;
-	} catch (const std::exception& e) {
-		std::cerr << e.what() << "\n";
-		return 1;
+	for (ui32 e=0; e<epochs; ++e) {
+		try {
+			run_model_impl(c, trainState, trainDataFlat, trainStatFlat, c.FbFactor, true);
+			run_model_impl(c, testState, testDataFlat, testStatFlat, 0.0, false);
+		} catch (const std::exception& e) {
+			std::cerr << e.what() << "\n";
+			return 1;
+		}		
 	}
+	return 0;
 }
 
 TStructure get_structure_info() {
