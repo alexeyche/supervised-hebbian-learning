@@ -44,10 +44,15 @@ def preprocess(x, y):
 	)
 
 
-F0 = np.ones((input_size, layer_size), dtype=np.float32) * 0.5
-# F0 = xavier_init(input_size, layer_size)
-F1 = np.ones((layer_size, output_size), dtype=np.float32) * 0.2
-# F1 = xavier_init(layer_size, output_size)
+def norm(f):
+	return 2.0*f/np.linalg.norm(f, 1, axis=0)
+
+# F0 = np.ones((input_size, layer_size), dtype=np.float32) * 0.5
+F0 = xavier_init(input_size, layer_size)
+F0 = norm(F0)
+
+# F1 = np.ones((layer_size, output_size), dtype=np.float32) * 0.2
+F1 = xavier_init(layer_size, output_size)
 
 F0_copy = F0.copy()
 
@@ -55,8 +60,8 @@ c = Config()
 c.Dt = 1.0
 c.TauSyn = 5.0
 c.FbFactor = 1.0
-c.TauMean = 50.0
-c.LearningRate = 0.1 * 1000.0
+c.TauMean = 100.0
+c.LearningRate = 0.1 * 10.0
 c.Lambda = 0.0
 c.F0 = MatrixFlat.from_np(F0)
 c.F1 = MatrixFlat.from_np(F1)
@@ -71,8 +76,8 @@ x[30,0,2] = 1.0
 x = x.transpose((1, 0, 2))
 
 y = np.zeros((seq_length, batch_size, output_size), dtype=np.float32)
-y[15,0,0] = 1.0
-y[15,0,1] = 1.0
+y[14,0,0] = 1.0
+y[0,0,1] = 1.0
 y = smooth_batch_matrix(y, kernel=exp_filter).astype(np.float32).transpose((1, 0, 2))
 
 x = x.reshape((x.shape[0], x.shape[1]*x.shape[2]))
@@ -95,6 +100,11 @@ st_train, st_test = State.alloc(), State.alloc()
 
 epochs = 1000
 dF0h = np.zeros((epochs, input_size, layer_size))
+dF1h = np.zeros((epochs, layer_size, output_size))
+
+# dA0h = np.zeros((epochs*seq_length, batch_size, layer_size))
+# A0h = np.zeros((epochs*seq_length, batch_size, layer_size))
+# Outputh = np.zeros((epochs*seq_length, batch_size, output_size))
 
 t0 = time.time()
 
@@ -109,28 +119,39 @@ for e in xrange(epochs):
 		x,
 		y
 	)
-	dF0h[e] = np.mean(st.dF0, 0)
-
-	F0 += c.LearningRate * st_train.dF0 
+	dF0h[e] = st_train.dF0
+	dF1h[e] = st_train.dF1
 	
-	F0 = F0/np.linalg.norm(F0, 1, axis=0)
-	c.F0 = MatrixFlat.from_np(F0)
+	# Outputh[(e*seq_length):((e+1)*seq_length)] = np.transpose(st.Output, (1, 0, 2)).copy()
+	# A0h[(e*seq_length):((e+1)*seq_length)] = np.transpose(st.A, (1, 0, 2)).copy()
+	# dA0h[(e*seq_length):((e+1)*seq_length)] = np.transpose(st.dA, (1, 0, 2)).copy()
+	
+	if e > 10:
+		F0 += 10.0*c.LearningRate * st_train.dF0 
+		F1 += 10.0*c.LearningRate * st_train.dF1
+	
+		F0 = norm(F0)
+		c.F0 = MatrixFlat.from_np(F0)
+		c.F1 = MatrixFlat.from_np(F1)
 	
 	if e % 10 == 0:
 		t1 = time.time()
-		print "Epoch {} ({:.3f}s), train error: {:.4f}, test error: {:.4f}".format(
+		print "Epoch {} ({:.3f}s), error: {:.3f}, t.error: {:.3f}, |fb|: {:.3f}".format(
 				e,
 				t1-t0,
 				np.sum(np.square(rs(y) - st.Output)),
-				np.sum(np.square(rs(yt) - sv.Output))
+				np.sum(np.square(rs(yt) - sv.Output)),
+				np.linalg.norm(st.De)
 			)
 		t0 = time.time()
 
-# shl(dF0h[:,0,0], dF0h[:,1,0], dF0h[:,2,0], labels=["0","1","2"])
+shl(dF0h[:,0,0], dF0h[:,1,0], dF0h[:,2,0], labels=["0","1","2"], title="dF0", show=False)
+shl(dF1h[:,0,0], dF1h[:,1,0], dF1h[:,2,0], labels=["0","1","2"], title="dF1", show=False)
+plt.show()
 
-shl(st.dF0[:,:,0], show=False, title="dF0")
-shl(st.De[0,:,0], sv.De[0,:,0], show=False, title="De", labels=["Train", "Test"])
-shl(st.A[0,:,0], sv.A[0, :, 0], title="A", labels=["Train", "Test"])
+# shl(st.dF0[:,:,0], show=False, title="dF0")
+# shl(st.De[0,:,0], sv.De[0,:,0], show=False, title="De", labels=["Train", "Test"])
+# shl(st.A[0,:,0], sv.A[0, :, 0], title="A", labels=["Train", "Test"])
 
 
 

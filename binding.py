@@ -132,12 +132,14 @@ class State(StructureWithSizeDescr):
     _fields_ = [
         ("A0m", MatrixFlat),
         ("dF0", MatrixFlat),
+        ("dF1", MatrixFlat),
     ]
 
     _struc_info_ = get_structure_info()
     _size_ = {
         "A0m": (_struc_info_.BatchSize, _struc_info_.LayerSize),
         "dF0": (_struc_info_.InputSize, _struc_info_.LayerSize),
+        "dF1": (_struc_info_.LayerSize, _struc_info_.OutputSize),
     }
 
 
@@ -146,6 +148,7 @@ class Statistics(StructureWithSizeDescr):
         ("Input", MatrixFlat),
         ("U", MatrixFlat),
         ("A", MatrixFlat),
+        ("dA", MatrixFlat),
         ("Output", MatrixFlat),
         ("De", MatrixFlat),
         ("dF0", MatrixFlat),
@@ -156,6 +159,7 @@ class Statistics(StructureWithSizeDescr):
         "Input": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.InputSize),
         "U": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.LayerSize),
         "A": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.LayerSize),
+        "dA": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.LayerSize),
         "Output": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.OutputSize),
         "De": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.OutputSize),
         "dF0": (_struc_info_.SeqLength, _struc_info_.InputSize, _struc_info_.LayerSize),
