@@ -116,8 +116,8 @@ struct TStateFlat {
 };
 
 
-static constexpr int InputSize = 3;
-static constexpr int LayerSize = 10;
+static constexpr int InputSize = 5;
+static constexpr int LayerSize = 2;
 static constexpr int OutputSize = 2;
 static constexpr int BatchSize = 4;
 static constexpr int LayersNum = 1;
@@ -242,6 +242,7 @@ void run_model_impl(
 	TMatrix<LayerSize, OutputSize> F1 = \
 		TMatrixFlat::ToEigen<LayerSize, OutputSize>(c.F1);
 		
+
 	TMatrix<BatchSize, InputSize> inputSpikesState = \
 		TMatrix<BatchSize, InputSize>::Zero();
 
@@ -252,21 +253,27 @@ void run_model_impl(
 	
 	s.dF0 = TMatrix<InputSize, LayerSize>::Zero();
 	s.dF1 = TMatrix<LayerSize, OutputSize>::Zero();
+	TMatrix<BatchSize, LayerSize> A0 = TMatrix<BatchSize, LayerSize>::Zero();
 
 	for (ui32 t=0; t<SeqLength; ++t) {
 		TMatrix<BatchSize, InputSize> x = data.Input.block<BatchSize, InputSize>(0, t*InputSize);
 
-		inputSpikesState += c.Dt * (x - inputSpikesState) / c.TauSyn;
+		// inputSpikesState = x;
+
+		// TMatrix<BatchSize, InputSize> feedforward = x;
+		TMatrix<BatchSize, InputSize> feedforward = x - A0 * F0.transpose();
+
+		// inputSpikesState += c.Dt * (x - inputSpikesState) / c.TauSyn;
 
 		TMatrix<BatchSize, LayerSize> du = \
-			(inputSpikesState * F0 - u) + \
+			(feedforward * F0 - u) + \
 			(fbFactor * de * F1.transpose() - u);
 		
 		u += c.Dt * du / c.TauSyn;
 
 		// layerState += c.Dt * (u - layerState) / c.TauSyn;
 
-		TMatrix<BatchSize, LayerSize> A0 = Act(u);
+		A0 = Act(u);
 
 		TMatrix<BatchSize, OutputSize> uo = A0 * F1;
 
@@ -276,25 +283,25 @@ void run_model_impl(
 		de = uo_t - uo;
 
 		TMatrix<InputSize, LayerSize> dF0t = \
-			inputSpikesState.transpose() * A0;
+			feedforward.transpose() * A0;
 		
 		// TMatrix<InputSize, LayerSize> dF0t = \
-		// 	inputSpikesState.transpose() * (A0.array() * (A0.array() - c.Lambda).sign()).matrix();
+		// 	feedforward.transpose() * ((A0.array() - c.Lambda)).matrix();
 		
 		// TMatrix<InputSize, LayerSize> dF0t = \
-		// 	inputSpikesState.transpose() * ((A0.array() - s.A0m.array())).matrix();
+		// 	feedforward.transpose() * ((A0.array() - s.A0m.array())).matrix();
 
 		// TMatrix<InputSize, LayerSize> dF0t = \
-			// inputSpikesState.transpose() * (A0. array() * (A0.array() - s.A0m.array())).matrix();
+			// feedforward.transpose() * (A0. array() * (A0.array() - s.A0m.array())).matrix();
 
 
 		// TMatrix<InputSize, LayerSize> dF0t = \
-			// (inputSpikesState.transpose() * A0) - (c.Lambda * F0.array()).matrix();
+			// (feedforward.transpose() * A0) - (c.Lambda * F0.array()).matrix();
 
 		// TMatrix<InputSize, LayerSize> dF0t = \
-			// ((inputSpikesState - A0 * F0.transpose()).transpose() * A0);
+			// ((feedforward - A0 * F0.transpose()).transpose() * A0);
 		// TMatrix<InputSize, LayerSize> dF0t = \
-		// 	(inputSpikesState.transpose() * (a.array() - 0.02).matrix());
+		// 	(feedforward.transpose() * (a.array() - 0.02).matrix());
 
 
 		TMatrix<LayerSize, OutputSize> dF1t = \
