@@ -62,8 +62,8 @@ F0_copy = F0.copy()
 c = Config()
 c.Dt = 1.0
 c.TauSyn = 2.0
-c.FbFactor = 0.0
-c.TauMean = 100.0
+c.FbFactor = 0.5
+c.TauMean = 50.0
 c.LearningRate = 0.1 * 1.0
 c.Lambda = 0.02
 c.F0 = MatrixFlat.from_np(F0)
@@ -103,9 +103,10 @@ xt, yt = preprocess(xt, yt)
 
 st_train, st_test = State.alloc(), State.alloc()
 
-epochs = 1000
+epochs = 1
 dF0h = np.zeros((epochs, input_size, layer_size))
 dF1h = np.zeros((epochs, layer_size, output_size))
+# A0mh = np.zeros((epochs, batch_size, layer_size))
 
 def norm(f):
 	return 0.2*f/np.linalg.norm(f, 2, axis=0)
@@ -133,23 +134,34 @@ for e in xrange(epochs):
 	
 	dF0h[e] = st_train.dF0
 	dF1h[e] = st_train.dF1
+	# A0mh[e] = st_train.A0m
+
+	dF0 = np.zeros(F0.shape)
+
+	xx = rs(x)
+	for i in xrange(seq_length):
+		A = st.A[:, i, :]
+		X = xx[:,i,:] # - np.dot(A, F0.T)
+
+		dF0 += np.dot(X.T, A) / seq_length
 	
 	# Outputh[(e*seq_length):((e+1)*seq_length)] = np.transpose(st.Output, (1, 0, 2)).copy()
 	# A0h[(e*seq_length):((e+1)*seq_length)] = np.transpose(st.A, (1, 0, 2)).copy()
 	# dA0h[(e*seq_length):((e+1)*seq_length)] = np.transpose(st.dA, (1, 0, 2)).copy()
 	
 	if e > 0:
-		F0 += 5.0 * c.LearningRate * st_train.dF0 
-		F1 += 5.0 * c.LearningRate * st_train.dF1
+		F0 += 20.0 * c.LearningRate * st_train.dF0 
+		# F1 += 5.0 * c.LearningRate * st_train.dF1
 		
 		# F0 = norm(F0)
 		# F1 = norm(F1)
 		
 		c.F0 = MatrixFlat.from_np(F0)
 		c.F1 = MatrixFlat.from_np(F1)
-	
-	if e % 100 == 0:
 
+
+	if e % 100 == 0:
+		
 		t1 = time.time()
 		print "Epoch {} ({:.3f}s), error: {:.3f}, t.error: {:.3f}, |fb|: {:.3f}".format(
 				e,
@@ -161,48 +173,33 @@ for e in xrange(epochs):
 		t0 = time.time()
 
 
+## Ways to solve this problem:
+## 1) Second averaging mechanism on a faster scale
+## 2) Neuron care only about super active nodes
+## 3) Powerful and fast inhibition
 
-# shl(
-# 	*[dF0h[:,i,0] for i in xrange(input_size)], 
-# 	labels=[str(i) for i in xrange(input_size)], 
-# 	title="dF0", 
-# 	show=False
-# )
+shl(dF0[0], st_train.dF0[0], show=False, title="0 syn", labels=["Fake", "Real"])
+shl(dF0[1], st_train.dF0[1], show=False, title="1 syn", labels=["Fake", "Real"])
 
+de = np.dot(st.De[1], F1.T) * relu_deriv(st.A[1])
 
-
-# shl(
-# 	*[st.dF0[:,i,0] for i in xrange(input_size)], 
-# 	labels=[str(i) for i in xrange(input_size)],
-# 	show=False,
-# 	title="dF"
-# )
+diff = st.A[1]-de
+diff_idx = np.argsort(np.sum(np.square(diff),0))[-5:]
+print diff_idx
 
 
-shl(st.A[1], title="A", show=False)
-shl(sv.Output[:,:,0].T, show=False)
+id=26
+mean_train = np.tile(st_train.A0m[1, id], seq_length)
+mean_test = np.tile(st_test.A0m[1, id], seq_length)
+shl(st.A[1,:,id], sv.A[1,:,id], de[:,id], mean_train, mean_test, labels=["A", "Av", "De", "A0m train", "A0m test"], show=False)
+
 plt.show()
 
 
-# shl(st.A[0])
-# shl(st.De[0])
+# shl(de[:,2], st.A[1][:,2])
 
-# shl(dF0h[:,0,0], dF0h[:,1,0], dF0h[:,2,0], labels=["0","1","2"], title="dF0", show=False)
-# shl(dF1h[:,0,0], dF1h[:,1,0], dF1h[:,2,0], labels=["0","1","2"], title="dF1", show=False)
+# shl(st.A[1][:,0], sv.A[1][:,0], de[:,0], labels=["A", "Av", "De"], show=False)
+# shl(st.A[1][:,1], sv.A[1][:,1], de[:,1], labels=["A", "Av", "De"], show=False)
+# shl(st.A[1][:,2], sv.A[1][:,2], de[:,2], labels=["A", "Av", "De"], show=False)
 # plt.show()
 
-
-
-# shl(st.dF0[:,:,0], show=False, title="dF0")
-# shl(st.De[0,:,0], sv.De[0,:,0], show=False, title="De", labels=["Train", "Test"])
-# shl(st.A[0,:,0], sv.A[0, :, 0], title="A", labels=["Train", "Test"])
-
-
-
-# shl(ts.U[1,:,:], show=False)
-# shl(vs.U[1,:,:], show=True)
-# shl(st.A[0], title="Output")
-# shl(st.Output[0], title="Output")
-
-# shl(ts.De[1], title="De", show=False)
-# shl(ts.Output[1], title="Output")
