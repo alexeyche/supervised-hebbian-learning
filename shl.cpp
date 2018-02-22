@@ -116,8 +116,8 @@ struct TStateFlat {
 };
 
 
-static constexpr int InputSize = 5;
-static constexpr int LayerSize = 2;
+static constexpr int InputSize = 2;
+static constexpr int LayerSize = 30;
 static constexpr int OutputSize = 2;
 static constexpr int BatchSize = 4;
 static constexpr int LayersNum = 1;
@@ -128,6 +128,14 @@ TMatrix<NRows, NCols> Act(TMatrix<NRows, NCols> x) {
 	return x.cwiseMax(0.0); //.cwiseMin(1.0);
 }
 
+template <int NRows, int NCols>
+TMatrix<NRows, NCols> ActDeriv(TMatrix<NRows, NCols> x) {
+	return x.unaryExpr(
+		[](const float xv) { 
+			return xv > 0.0f ? 1.0f : 0.0f;
+		}
+	);
+}
 
 struct TConfig {
 	TMatrixFlat F0;
@@ -260,8 +268,8 @@ void run_model_impl(
 
 		// inputSpikesState = x;
 
-		// TMatrix<BatchSize, InputSize> feedforward = x;
-		TMatrix<BatchSize, InputSize> feedforward = x - A0 * F0.transpose();
+		TMatrix<BatchSize, InputSize> feedforward = x;
+		// TMatrix<BatchSize, InputSize> feedforward = x - A0 * F0.transpose();
 
 		// inputSpikesState += c.Dt * (x - inputSpikesState) / c.TauSyn;
 
@@ -282,11 +290,15 @@ void run_model_impl(
 
 		de = uo_t - uo;
 
+
 		TMatrix<InputSize, LayerSize> dF0t = \
-			feedforward.transpose() * A0;
+			feedforward.transpose() * ((de * F1.transpose()).array() * (ActDeriv(A0).array())).matrix();
+
+		// TMatrix<InputSize, LayerSize> dF0t = \
+		// 	feedforward.transpose() * A0;
 		
 		// TMatrix<InputSize, LayerSize> dF0t = \
-		// 	feedforward.transpose() * ((A0.array() - c.Lambda)).matrix();
+			// feedforward.transpose() * ((A0.array() - c.Lambda)).matrix();
 		
 		// TMatrix<InputSize, LayerSize> dF0t = \
 		// 	feedforward.transpose() * ((A0.array() - s.A0m.array())).matrix();

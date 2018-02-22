@@ -9,6 +9,12 @@ from datasets import XorDataset, to_sparse_ts
 
 np.random.seed(10)
 
+def relu_deriv(x):
+    if isinstance(x, float):
+        return 1.0 if x > 0.0 else 0.0
+    dadx = np.zeros(x.shape)
+    dadx[np.where(x > 0.0)] = 1.0
+    return dadx
 
 def xavier_init(fan_in, fan_out, const=0.5):
     low = -const * np.sqrt(6.0 / (fan_in + fan_out))
@@ -29,8 +35,8 @@ def rs(m):
 	return m.reshape((m.shape[0], seq_length, m.shape[1]/seq_length))
 
 def preprocess(x, y):
-	xt = to_sparse_ts(x, seq_length, at=3, filter_size=24).astype(np.float32)
-	yt = to_sparse_ts(y, seq_length, at=3, filter_size=24).astype(np.float32)
+	xt = to_sparse_ts(x, seq_length, at=10, filter_size=2*24, kernel=gauss_filter, sigma=0.005).astype(np.float32)
+	yt = to_sparse_ts(y, seq_length, at=10, filter_size=2*24, kernel=gauss_filter, sigma=0.005).astype(np.float32)
 
 	xt = np.transpose(xt, (1, 0, 2))
 	yt = np.transpose(yt, (1, 0, 2))
@@ -44,52 +50,51 @@ def preprocess(x, y):
 	)
 
 
-F0 = np.ones((input_size, layer_size), dtype=np.float32)
-# F0 = xavier_init(input_size, layer_size)
-F0 = norm(F0)
+# F0 = np.ones((input_size, layer_size), dtype=np.float32)
+F0 = xavier_init(input_size, layer_size)
 
-F1 = np.ones((layer_size, output_size), dtype=np.float32) 
-F1 = norm(F1) * 0.5
-# F1 = xavier_init(layer_size, output_size)
+# F1 = np.ones((layer_size, output_size), dtype=np.float32) 
+# F1 = norm(F1) * 0.5
+F1 = xavier_init(layer_size, output_size)
 
 F0_copy = F0.copy()
 
 c = Config()
 c.Dt = 1.0
-c.TauSyn = 5.0
-c.FbFactor = 1.0
+c.TauSyn = 2.0
+c.FbFactor = 0.0
 c.TauMean = 100.0
-c.LearningRate = 0.1 * 10.0
-c.Lambda = 0.3
+c.LearningRate = 0.1 * 1.0
+c.Lambda = 0.02
 c.F0 = MatrixFlat.from_np(F0)
 c.F1 = MatrixFlat.from_np(F1)
 
 
 
-x = np.zeros((seq_length, batch_size, input_size), dtype=np.float32)
-x[1,0,0] = 1.0
-x[10,0,1] = 1.0
-x[20,0,2] = 1.0
-x[30,0,3] = 1.0
-x[40,0,4] = 1.0
-x = smooth_batch_matrix(x, kernel=gauss_filter, sigma=0.0025).astype(np.float32).transpose((1, 0, 2))
-# x = x.transpose((1, 0, 2))
+# x = np.zeros((seq_length, batch_size, input_size), dtype=np.float32)
+# x[1,0,0] = 1.0
+# x[10,0,1] = 1.0
+# x[20,0,2] = 1.0
+# x[30,0,3] = 1.0
+# x[40,0,4] = 1.0
+# x = smooth_batch_matrix(x, kernel=gauss_filter, sigma=0.0025).astype(np.float32).transpose((1, 0, 2))
+# # x = x.transpose((1, 0, 2))
 
-y = np.zeros((seq_length, batch_size, output_size), dtype=np.float32)
-y[19,0,0] = 1.0
-y[19,0,1] = 1.0
-y = smooth_batch_matrix(y, kernel=gauss_filter, sigma=0.0025).astype(np.float32).transpose((1, 0, 2))
+# y = np.zeros((seq_length, batch_size, output_size), dtype=np.float32)
+# y[19,0,0] = 1.0
+# y[19,0,1] = 1.0
+# y = smooth_batch_matrix(y, kernel=gauss_filter, sigma=0.0025).astype(np.float32).transpose((1, 0, 2))
 
-x = x.reshape((x.shape[0], x.shape[1]*x.shape[2]))
-y = y.reshape((y.shape[0], y.shape[1]*y.shape[2]))
-yt = y
+# x = x.reshape((x.shape[0], x.shape[1]*x.shape[2]))
+# y = y.reshape((y.shape[0], y.shape[1]*y.shape[2]))
+# yt = y
 
-# ds = XorDataset()
-# x, y = ds.next_train_batch()
-# x, y = preprocess(x, y)
+ds = XorDataset()
+x, y = ds.next_train_batch()
+x, y = preprocess(x, y)
 
-# xt, yt = ds.next_test_batch()
-# xt, yt = preprocess(xt, yt)
+xt, yt = ds.next_test_batch()
+xt, yt = preprocess(xt, yt)
 
 
 # trainInp = Data() 
@@ -98,12 +103,15 @@ yt = y
 
 st_train, st_test = State.alloc(), State.alloc()
 
-epochs = 5000
+epochs = 1000
 dF0h = np.zeros((epochs, input_size, layer_size))
 dF1h = np.zeros((epochs, layer_size, output_size))
 
 def norm(f):
-	return 1.0*f/np.linalg.norm(f, 2, axis=0)
+	return 0.2*f/np.linalg.norm(f, 2, axis=0)
+
+# F0 = norm(F0)
+
 
 # dA0h = np.zeros((epochs*seq_length, batch_size, layer_size))
 # A0h = np.zeros((epochs*seq_length, batch_size, layer_size))
@@ -130,15 +138,18 @@ for e in xrange(epochs):
 	# A0h[(e*seq_length):((e+1)*seq_length)] = np.transpose(st.A, (1, 0, 2)).copy()
 	# dA0h[(e*seq_length):((e+1)*seq_length)] = np.transpose(st.dA, (1, 0, 2)).copy()
 	
-	if e > 10:
-		F0 += 10.0*c.LearningRate * st_train.dF0 
-		F1 += 0.1*c.LearningRate * st_train.dF1
-	
-		F0 = norm(F0)
+	if e > 0:
+		F0 += 5.0 * c.LearningRate * st_train.dF0 
+		F1 += 5.0 * c.LearningRate * st_train.dF1
+		
+		# F0 = norm(F0)
+		# F1 = norm(F1)
+		
 		c.F0 = MatrixFlat.from_np(F0)
 		c.F1 = MatrixFlat.from_np(F1)
 	
-	if e % 10 == 0:
+	if e % 100 == 0:
+
 		t1 = time.time()
 		print "Epoch {} ({:.3f}s), error: {:.3f}, t.error: {:.3f}, |fb|: {:.3f}".format(
 				e,
@@ -149,25 +160,29 @@ for e in xrange(epochs):
 			)
 		t0 = time.time()
 
-shl(
-	*[dF0h[:,i,0] for i in xrange(input_size)], 
-	labels=[str(i) for i in xrange(input_size)], 
-	title="dF0", 
-	show=False
-)
-
-# shl(dF1h[:,0,0], dF1h[:,1,0], labels=["0","1"], title="dF1", show=False)
-# plt.show()
 
 
-shl(
-	*[st.dF0[:,i,0] for i in xrange(input_size)], 
-	labels=[str(i) for i in xrange(input_size)],
-	show=False,
-	title="dF"
-)
+# shl(
+# 	*[dF0h[:,i,0] for i in xrange(input_size)], 
+# 	labels=[str(i) for i in xrange(input_size)], 
+# 	title="dF0", 
+# 	show=False
+# )
 
-shl(st.A[0], title="A")
+
+
+# shl(
+# 	*[st.dF0[:,i,0] for i in xrange(input_size)], 
+# 	labels=[str(i) for i in xrange(input_size)],
+# 	show=False,
+# 	title="dF"
+# )
+
+
+shl(st.A[1], title="A", show=False)
+shl(sv.Output[:,:,0].T, show=False)
+plt.show()
+
 
 # shl(st.A[0])
 # shl(st.De[0])
