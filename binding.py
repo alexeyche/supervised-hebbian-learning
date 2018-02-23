@@ -112,6 +112,7 @@ class MatrixFlat(ct.Structure):
 class Config(ct.Structure):
     _fields_ = [
         ("F0", MatrixFlat),
+        ("R0", MatrixFlat),
         ("F1", MatrixFlat),
         ("Dt", ct.c_double),
         ("TauSyn", ct.c_double),

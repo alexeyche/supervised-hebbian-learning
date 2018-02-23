@@ -139,6 +139,7 @@ TMatrix<NRows, NCols> ActDeriv(TMatrix<NRows, NCols> x) {
 
 struct TConfig {
 	TMatrixFlat F0;
+	TMatrixFlat R0;
 	TMatrixFlat F1;
 	double Dt;
  	double TauSyn;
@@ -247,6 +248,8 @@ void run_model_impl(
 
 	TMatrix<InputSize, LayerSize> F0 = \
 		TMatrixFlat::ToEigen<InputSize, LayerSize>(c.F0);
+	TMatrix<LayerSize, LayerSize> R0 = \
+		TMatrixFlat::ToEigen<LayerSize, LayerSize>(c.R0);
 	TMatrix<LayerSize, OutputSize> F1 = \
 		TMatrixFlat::ToEigen<LayerSize, OutputSize>(c.F1);
 		
@@ -274,8 +277,11 @@ void run_model_impl(
 		// inputSpikesState += c.Dt * (x - inputSpikesState) / c.TauSyn;
 
 		TMatrix<BatchSize, LayerSize> du = \
-			(feedforward * F0 - u) + \
-			(fbFactor * de * F1.transpose() - u);
+			(feedforward * F0 - u) \
+			+ (fbFactor * de * F1.transpose() - u);
+			// - A0 * R0 \
+
+			
 		
 		u += c.Dt * du / c.TauSyn;
 
