@@ -75,7 +75,7 @@ F0_copy = F0.copy()
 c = Config()
 c.Dt = 1.0
 c.TauSyn = 2.0
-c.FbFactor = 0.0
+c.FbFactor = 1.0
 c.TauMean = 100.0
 c.Threshold = 0.1
 c.LearningRate = 0.1 * 1.0
@@ -124,7 +124,7 @@ xt, yt = preprocess(xt, yt)
 
 st_train, st_test = State.alloc(), State.alloc()
 
-epochs = 5000
+epochs = 1
 dF0h = np.zeros((epochs, input_size, layer_size))
 dF1h = np.zeros((epochs, layer_size, output_size))
 # A0mh = np.zeros((epochs, batch_size, layer_size))
@@ -198,29 +198,29 @@ for e in xrange(epochs):
 ## 2) Neuron care only about super active nodes
 ## 3) Powerful and fast inhibition
 
-shm(st.A[1])
+# shm(st.A[1])
 
-# shl(dF0[0], st_train.dF0[0], show=False, title="0 syn", labels=["Fake", "Real"])
-# shl(dF0[1], st_train.dF0[1], show=False, title="1 syn", labels=["Fake", "Real"])
-
-
-# de = np.dot(st.De[1], F1.T) * relu_deriv(st.A[1])
+shl(dF0[0], st_train.dF0[0], show=False, title="0 syn", labels=["Fake", "Real"])
+shl(dF0[1], st_train.dF0[1], show=False, title="1 syn", labels=["Fake", "Real"])
 
 
-# shl(st.A[1,10,:], sv.A[1,10,:], de[10,:], labels=["A", "Av", "De"], show=False)
+de = np.dot(st.De[1], F1.T) * relu_deriv(st.A[1])
 
 
-# diff = st.A[1]-de
-# diff_idx = np.argsort(np.sum(np.square(diff),0))[-5:]
-# print diff_idx
+shl(st.A[1,10,:], sv.A[1,10,:], de[10,:], labels=["A", "Av", "De"], show=False)
 
 
-# id=17
-# mean_train = np.tile(st_train.A0m[1, id], seq_length)
-# mean_test = np.tile(st_test.A0m[1, id], seq_length)
-# shl(st.A[1,:,id], sv.A[1,:,id], de[:,id], mean_train, mean_test, labels=["A", "Av", "De", "A0m train", "A0m test"], show=False)
+diff = st.A[1]-de
+diff_idx = np.argsort(np.sum(np.square(diff),0))[-5:]
+print diff_idx
 
-# plt.show()
+
+id=17
+mean_train = np.tile(st_train.A0m[1, id], seq_length)
+mean_test = np.tile(st_test.A0m[1, id], seq_length)
+shl(st.A[1,:,id], sv.A[1,:,id], de[:,id], mean_train, mean_test, labels=["A", "Av", "De", "A0m train", "A0m test"], show=False)
+
+plt.show()
 
 
 # shl(de[:,2], st.A[1][:,2])
