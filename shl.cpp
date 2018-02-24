@@ -124,15 +124,15 @@ static constexpr int LayersNum = 1;
 static constexpr int SeqLength = 50;
 
 template <int NRows, int NCols>
-TMatrix<NRows, NCols> Act(TMatrix<NRows, NCols> x) {
-	return x.cwiseMax(0.0); //.cwiseMin(1.0);
+TMatrix<NRows, NCols> Act(TMatrix<NRows, NCols> x, double threshold) {
+	return (x.array() - threshold).cwiseMax(0.0); //.cwiseMin(1.0);
 }
 
 template <int NRows, int NCols>
-TMatrix<NRows, NCols> ActDeriv(TMatrix<NRows, NCols> x) {
+TMatrix<NRows, NCols> ActDeriv(TMatrix<NRows, NCols> x, double threshold) {
 	return x.unaryExpr(
-		[](const float xv) { 
-			return xv > 0.0f ? 1.0f : 0.0f;
+		[threshold](const float xv) { 
+			return xv > static_cast<float>(threshold) ? 1.0f : 0.0f;
 		}
 	);
 }
@@ -144,6 +144,7 @@ struct TConfig {
 	double Dt;
  	double TauSyn;
  	double TauMean;
+ 	double Threshold;
  	double FbFactor;
  	double LearningRate;
  	double Lambda;
@@ -287,7 +288,7 @@ void run_model_impl(
 
 		// layerState += c.Dt * (u - layerState) / c.TauSyn;
 
-		A0 = Act(u);
+		A0 = Act(u, c.Threshold);
 
 		TMatrix<BatchSize, OutputSize> uo = A0 * F1;
 
@@ -298,7 +299,10 @@ void run_model_impl(
 
 
 		TMatrix<InputSize, LayerSize> dF0t = \
-			feedforward.transpose() * ((de * F1.transpose()).array() * (ActDeriv(A0).array())).matrix();
+			feedforward.transpose() * (
+				(de * F1.transpose()).array() * 
+				(ActDeriv(A0, c.Threshold).array())
+			).matrix();
 
 		// TMatrix<InputSize, LayerSize> dF0t = \
 		// 	feedforward.transpose() * A0;

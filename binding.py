@@ -117,6 +117,7 @@ class Config(ct.Structure):
         ("Dt", ct.c_double),
         ("TauSyn", ct.c_double),
         ("TauMean", ct.c_double),
+        ("Threshold", ct.c_double),
         ("FbFactor", ct.c_double),
         ("LearningRate", ct.c_double),
         ("Lambda", ct.c_double)
