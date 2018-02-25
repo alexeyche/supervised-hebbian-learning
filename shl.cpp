@@ -267,6 +267,8 @@ void run_model_impl(
 	s.dF1 = TMatrix<LayerSize, OutputSize>::Zero();
 	TMatrix<BatchSize, LayerSize> A0 = TMatrix<BatchSize, LayerSize>::Zero();
 
+	TMatrix<BatchSize, OutputSize*SeqLength> deSeq = TMatrix<BatchSize, OutputSize*SeqLength>::Zero();
+
 	for (ui32 t=0; t<SeqLength; ++t) {
 		TMatrix<BatchSize, InputSize> x = data.Input.block<BatchSize, InputSize>(0, t*InputSize);
 
@@ -279,9 +281,9 @@ void run_model_impl(
 
 		TMatrix<BatchSize, LayerSize> du = \
 			(feedforward * F0 - u) \
-			+ (fbFactor * de * F1.transpose() - u);
-			// - A0 * R0 \
+			+ (fbFactor * deSeq.block<BatchSize, OutputSize>(0, t*OutputSize) * F1.transpose() );
 
+		du -= A0 * R0;
 			
 		
 		u += c.Dt * du / c.TauSyn;
@@ -296,7 +298,10 @@ void run_model_impl(
 			data.Output.block<BatchSize, OutputSize>(0, t*OutputSize);
 
 		de = uo_t - uo;
-
+		if (t < SeqLength-15) {
+			deSeq.block<BatchSize, OutputSize>(0, (t+15)*OutputSize) = de;	
+		}
+		
 
 		TMatrix<InputSize, LayerSize> dF0t = \
 			feedforward.transpose() * (
@@ -343,6 +348,8 @@ void run_model_impl(
 		stats.dF0.row(t) = Eigen::Map<TMatrix<1, InputSize*LayerSize>>(dF0t.data());
 		stats.dA.block<BatchSize, LayerSize>(0, t*LayerSize) = (A0.array() - s.A0m.array()).matrix();
 	}
+
+	stats.De = deSeq;
 	
 	// if (learn) {
 	// 	F0 += c.LearningRate * s.dF0;

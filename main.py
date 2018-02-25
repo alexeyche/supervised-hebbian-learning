@@ -77,12 +77,12 @@ c.Dt = 1.0
 c.TauSyn = 2.0
 c.FbFactor = 1.0
 c.TauMean = 100.0
-c.Threshold = 0.1
+c.Threshold = 0.0
 c.LearningRate = 0.1 * 1.0
 c.Lambda = 0.02
 
-F0 = 5.0*norm(F0, 1)
-F1 = 5.0*norm(F1, 1)
+# F0 = 0.1*norm(F0, 1)
+# F1 = 0.1*norm(F1, 1)
 
 # R0 = 0.5*norm(R0, l=2)
 
@@ -124,7 +124,7 @@ xt, yt = preprocess(xt, yt)
 
 st_train, st_test = State.alloc(), State.alloc()
 
-epochs = 1
+epochs = 30
 dF0h = np.zeros((epochs, input_size, layer_size))
 dF1h = np.zeros((epochs, layer_size, output_size))
 # A0mh = np.zeros((epochs, batch_size, layer_size))
@@ -169,12 +169,12 @@ for e in xrange(epochs):
 	# A0h[(e*seq_length):((e+1)*seq_length)] = np.transpose(st.A, (1, 0, 2)).copy()
 	# dA0h[(e*seq_length):((e+1)*seq_length)] = np.transpose(st.dA, (1, 0, 2)).copy()
 	
-	if e > 0:
-		F0 += 10.0 * c.LearningRate * st_train.dF0
-		F1 += 10.0 * c.LearningRate * st_train.dF1
+	if e > 30:
+		F0 += 1.0 * c.LearningRate * st_train.dF0
+		F1 += 1.0 * c.LearningRate * st_train.dF1
 		
-		F0 = 5.0*norm(F0, 1)
-		F1 = 5.0*norm(F1, 1)
+		# F0 = 0.1*norm(F0, 1)
+		# F1 = 0.1*norm(F1, 1)
 		
 		c.F0 = MatrixFlat.from_np(F0)
 		c.F1 = MatrixFlat.from_np(F1)
@@ -200,19 +200,19 @@ for e in xrange(epochs):
 
 # shm(st.A[1])
 
-shl(dF0[0], st_train.dF0[0], show=False, title="0 syn", labels=["Fake", "Real"])
-shl(dF0[1], st_train.dF0[1], show=False, title="1 syn", labels=["Fake", "Real"])
+# shl(dF0[0], st_train.dF0[0], show=False, title="0 syn", labels=["Fake", "Real"])
+# shl(dF0[1], st_train.dF0[1], show=False, title="1 syn", labels=["Fake", "Real"])
 
 
-de = np.dot(st.De[1], F1.T) * relu_deriv(st.A[1])
+# de = np.dot(rs(y)[1] - st.Output[1], F1.T) * relu_deriv(st.A[1])
+de = np.dot(st.De[1], F1.T)
+
+# shl(st.A[1,10,:], de[10,:], labels=["A", "De"], show=False)
 
 
-shl(st.A[1,10,:], sv.A[1,10,:], de[10,:], labels=["A", "Av", "De"], show=False)
-
-
-diff = st.A[1]-de
-diff_idx = np.argsort(np.sum(np.square(diff),0))[-5:]
-print diff_idx
+# diff = st.A[1]-de
+# diff_idx = np.argsort(np.sum(np.square(diff),0))[-5:]
+# print diff_idx
 
 
 id=17
