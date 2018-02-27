@@ -7,7 +7,7 @@ from binding import run_model, get_structure_info
 from util import *
 from datasets import XorDataset, to_sparse_ts
 
-np.random.seed(11)
+np.random.seed(12)
 
 def relu_deriv(x):
     if isinstance(x, float):
@@ -114,16 +114,20 @@ c.F1 = MatrixFlat.from_np(F1)
 
 ds = XorDataset()
 x, y = ds.next_train_batch()
+# wt = 0.1*np.random.randn(2, input_size)
+# x = np.dot(x, wt)
+
 x, y = preprocess(x, y)
 
 xt, yt = ds.next_test_batch()
+# xt = np.dot(xt, wt)
 xt, yt = preprocess(xt, yt)
 
 
 
 st_train, st_test = State.alloc(), State.alloc()
 
-epochs = 30
+epochs = 5000
 dF0h = np.zeros((epochs, input_size, layer_size))
 dF1h = np.zeros((epochs, layer_size, output_size))
 A0mh = np.zeros((epochs, batch_size, layer_size))
@@ -161,9 +165,18 @@ for e in xrange(epochs):
 
 	# dF0 = np.sum([np.dot(st.Im[b].T, st.A[b]-1.05*st.Am[b]) for b in xrange(batch_size)], 0) ** 3
 	# dF0 = np.sum([np.dot(st.Im[b].T, st.A[b]-st.Am[b]) for b in xrange(batch_size)], 0)
-	# dF0 = 0.01*np.mean([np.dot(st.I[b].T, st.A[b]-st.Am[b]) for b in xrange(batch_size)], 0)
+
+	# dF0 = 0.01*np.mean([np.dot(st.I[b].T, st.A[b]-0.02) for b in xrange(batch_size)], 0)
 	
-	dF0 = 0.1*np.mean([np.dot(st.I[b].T, st.A[b]-sv.A[b]) for b in xrange(batch_size)], 0)
+	## work'ish:
+	dF0 = 0.1*np.mean([
+		np.dot(
+			st.I[b].T, 
+			np.maximum(np.dot(st.De[b], F1.T) * relu_deriv(st.A[b]), 0.0)
+		) for b in xrange(batch_size)
+	], 0)/seq_length
+
+	# dF0 = 0.1*np.mean([np.dot(st.I[b].T, st.A[b]-sv.A[b]) for b in xrange(batch_size)], 0)
 
 	# dF0 *= 10.0
 
@@ -172,7 +185,7 @@ for e in xrange(epochs):
 	# dA0h[(e*seq_length):((e+1)*seq_length)] = np.transpose(st.dA, (1, 0, 2)).copy()
 	
 	if e > 30:
-		F0 += 1.0 * c.LearningRate * st_train.dF0 #- F0*0.001
+		F0 += 1.0 * c.LearningRate * dF0 #- F0*0.001
 		F1 += 1.0 * c.LearningRate * st_train.dF1 #- F1*0.001
 		
 		# F0 = 1.0*norm(F0, 1)
@@ -214,10 +227,9 @@ de_fb = np.dot(st.De[1], F1.T) * relu_deriv(st.A[b])
 # shl(np.mean(st.A[0] - sv.A[0], 0), np.mean(de(0),0))
 
 shl(
-	(np.mean(st.A[1] - st.Am[1],0)), # - st_train.A0m[1]), 
-	(np.mean(sv.A[1],0)), # - st_test.A0m[1]), 
+	np.mean(st.A[1],0), # - st_train.A0m[1]), 
 	np.mean(de_fb, 0),
-	labels=["A", "Av", "De"]
+	labels=["A", "De"]
 )
 
 
