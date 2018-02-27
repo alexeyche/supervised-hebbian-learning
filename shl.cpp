@@ -84,6 +84,10 @@ struct TMatrixFlat {
   		);
   	}
 
+  	static TMatrixD ToEigenDynamic(TMatrixFlat flat) {
+  		return Eigen::Map<TMatrixD>(flat.Data, flat.NRows, flat.NCols);
+  	}
+
   	template <int NRows, int NCols>
   	static void FromEigen(TMatrix<NRows, NCols> m, TMatrixFlat* dst) {
   		ENSURE(NRows == dst->NRows, "Rows are not aligned for saving eigen matrix");
@@ -91,26 +95,38 @@ struct TMatrixFlat {
 
   		memcpy(dst->Data, m.data(), sizeof(float) * NRows * NCols);
   	}
+
+  	static void FromEigenDynamic(TMatrixD m, TMatrixFlat* dst) {
+  		ENSURE(m.rows() == dst->NRows, "Rows are not aligned for saving eigen matrix");
+  		ENSURE(m.cols() == dst->NCols, "Cols are not aligned for saving eigen matrix");
+
+  		memcpy(dst->Data, m.data(), sizeof(float) * m.rows() * m.cols());
+  	}
 };
 
 
 struct TStatisticsFlat {
-	TMatrixFlat Input;
+	TMatrixFlat I;
+	TMatrixFlat Im;
 	TMatrixFlat U;
 	TMatrixFlat A;
 	TMatrixFlat dA;
 	TMatrixFlat Output;
 	TMatrixFlat De;
 	TMatrixFlat dF0;
+	TMatrixFlat Am;
+	TMatrixFlat Amm;
 };
 
 struct TDataFlat {
-	TMatrixFlat Input;
+	TMatrixFlat I;
 	TMatrixFlat Output;
 };
 
 struct TStateFlat {
 	TMatrixFlat A0m;
+	TMatrixFlat A0mm;
+	TMatrixFlat Im;
 	TMatrixFlat dF0;
 	TMatrixFlat dF1;
 };
@@ -125,7 +141,7 @@ static constexpr int SeqLength = 50;
 
 template <int NRows, int NCols>
 TMatrix<NRows, NCols> Act(TMatrix<NRows, NCols> x, double threshold) {
-	return (x.array() - threshold).cwiseMax(0.0); //.cwiseMin(1.0);
+	return (x.array() - threshold).cwiseMax(0.0).cwiseMin(1.0);
 }
 
 template <int NRows, int NCols>
@@ -144,23 +160,25 @@ struct TConfig {
 	double Dt;
  	double TauSyn;
  	double TauMean;
+ 	double TauMeanLong;
  	double Threshold;
  	double FbFactor;
  	double LearningRate;
  	double Lambda;
+ 	ui32 FeedbackDelay;
 };
 
 
 
 struct TData {
-	TMatrix<BatchSize, InputSize*SeqLength> Input;
+	TMatrix<BatchSize, InputSize*SeqLength> I;
 	TMatrix<BatchSize, OutputSize*SeqLength> Output;
 
 	static TData FromFlat(TDataFlat s) {
-		ENSURE(s.Input.NRows == BatchSize, 
-			"Batch size is expected to be " << BatchSize << ", not: `" << s.Input.NRows << "`");
-		ENSURE(s.Input.NCols == InputSize*SeqLength, 
-			"Input number of columns is expected to be " << InputSize*SeqLength << ", not: `" << s.Input.NCols << "`");
+		ENSURE(s.I.NRows == BatchSize, 
+			"Batch size is expected to be " << BatchSize << ", not: `" << s.I.NRows << "`");
+		ENSURE(s.I.NCols == InputSize*SeqLength, 
+			"Input number of columns is expected to be " << InputSize*SeqLength << ", not: `" << s.I.NCols << "`");
 
 		ENSURE(s.Output.NRows == BatchSize, 
 			"Batch size is expected to be " << BatchSize << ", not: `" << s.Output.NRows << "`");
@@ -168,59 +186,72 @@ struct TData {
 			"Input number of columns is expected to be " << OutputSize*SeqLength << ", not: `" << s.Output.NCols << "`");
 
 		TData o;
-		o.Input = TMatrixFlat::ToEigen<BatchSize, InputSize*SeqLength>(s.Input);
+		o.I = TMatrixFlat::ToEigen<BatchSize, InputSize*SeqLength>(s.I);
 		o.Output = TMatrixFlat::ToEigen<BatchSize, OutputSize*SeqLength>(s.Output);
 		return o;
 	}
 
 	static void ToFlat(TData s, TDataFlat* f) {
-		TMatrixFlat::FromEigen(s.Input, &f->Input);
+		TMatrixFlat::FromEigen(s.I, &f->I);
 		TMatrixFlat::FromEigen(s.Output, &f->Output);
 	}
 };
 
 
 struct TStatistics {
-	TMatrix<BatchSize, InputSize*SeqLength> Input;
-	TMatrix<BatchSize, LayerSize*SeqLength> U;
-	TMatrix<BatchSize, LayerSize*SeqLength> A;
-	TMatrix<BatchSize, LayerSize*SeqLength> dA;
-	TMatrix<BatchSize, OutputSize*SeqLength> Output;
-	TMatrix<BatchSize, OutputSize*SeqLength> De;
-	TMatrix<SeqLength, InputSize*LayerSize> dF0;
+	TMatrixD I;
+	TMatrixD Im;
+	TMatrixD U;
+	TMatrixD A;
+	TMatrixD dA;
+	TMatrixD Output;
+	TMatrixD De;
+	TMatrixD dF0;
+	TMatrixD Am;
+	TMatrixD Amm;
 	
 	static TStatistics FromFlat(TStatisticsFlat s) {
 		TStatistics o;
-		o.Input = TMatrixFlat::ToEigen<BatchSize, InputSize*SeqLength>(s.Input);
-		o.U = TMatrixFlat::ToEigen<BatchSize, LayerSize*SeqLength>(s.U);
-		o.A = TMatrixFlat::ToEigen<BatchSize, LayerSize*SeqLength>(s.A);
-		o.dA = TMatrixFlat::ToEigen<BatchSize, LayerSize*SeqLength>(s.dA);
-		o.Output = TMatrixFlat::ToEigen<BatchSize, OutputSize*SeqLength>(s.Output);
-		o.De = TMatrixFlat::ToEigen<BatchSize, OutputSize*SeqLength>(s.De);
-		o.dF0 = TMatrixFlat::ToEigen<SeqLength, InputSize*LayerSize>(s.dF0);
+		o.I = TMatrixFlat::ToEigenDynamic(s.I);
+		o.Im = TMatrixFlat::ToEigenDynamic(s.Im);
+		o.U = TMatrixFlat::ToEigenDynamic(s.U);
+		o.A = TMatrixFlat::ToEigenDynamic(s.A);
+		o.dA = TMatrixFlat::ToEigenDynamic(s.dA);
+		o.Output = TMatrixFlat::ToEigenDynamic(s.Output);
+		o.De = TMatrixFlat::ToEigenDynamic(s.De);
+		o.dF0 = TMatrixFlat::ToEigenDynamic(s.dF0);
+		o.Am = TMatrixFlat::ToEigenDynamic(s.Am);
+		o.Amm = TMatrixFlat::ToEigenDynamic(s.Amm);
 		return o;
 	}
 
 	static void ToFlat(TStatistics s, TStatisticsFlat* f) {
-		TMatrixFlat::FromEigen(s.Input, &f->Input);
-		TMatrixFlat::FromEigen(s.U, &f->U);
-		TMatrixFlat::FromEigen(s.A, &f->A);
-		TMatrixFlat::FromEigen(s.dA, &f->dA);
-		TMatrixFlat::FromEigen(s.Output, &f->Output);
-		TMatrixFlat::FromEigen(s.De, &f->De);
-		TMatrixFlat::FromEigen(s.dF0, &f->dF0);
+		TMatrixFlat::FromEigenDynamic(s.I, &f->I);
+		TMatrixFlat::FromEigenDynamic(s.Im, &f->Im);
+		TMatrixFlat::FromEigenDynamic(s.U, &f->U);
+		TMatrixFlat::FromEigenDynamic(s.A, &f->A);
+		TMatrixFlat::FromEigenDynamic(s.dA, &f->dA);
+		TMatrixFlat::FromEigenDynamic(s.Output, &f->Output);
+		TMatrixFlat::FromEigenDynamic(s.De, &f->De);
+		TMatrixFlat::FromEigenDynamic(s.dF0, &f->dF0);
+		TMatrixFlat::FromEigenDynamic(s.Am, &f->Am);
+		TMatrixFlat::FromEigenDynamic(s.Amm, &f->Amm);
 	}
 };
 
 
 struct TState {
 	TMatrix<BatchSize, LayerSize> A0m;
+	TMatrix<BatchSize, LayerSize> A0mm;
+	TMatrix<BatchSize, InputSize> Im;
 	TMatrix<InputSize, LayerSize> dF0;
 	TMatrix<LayerSize, OutputSize> dF1;
 	
 	static TState FromFlat(TStateFlat s) {
 		TState o;
 		o.A0m = TMatrixFlat::ToEigen<BatchSize, LayerSize>(s.A0m);
+		o.A0mm = TMatrixFlat::ToEigen<BatchSize, LayerSize>(s.A0mm);
+		o.Im = TMatrixFlat::ToEigen<BatchSize, InputSize>(s.Im);
 		o.dF0 = TMatrixFlat::ToEigen<InputSize, LayerSize>(s.dF0);
 		o.dF1 = TMatrixFlat::ToEigen<LayerSize, OutputSize>(s.dF1);
 		return o;
@@ -228,6 +259,8 @@ struct TState {
 
 	static void ToFlat(TState s, TStateFlat* f) {
 		TMatrixFlat::FromEigen(s.A0m, &f->A0m);
+		TMatrixFlat::FromEigen(s.A0mm, &f->A0mm);
+		TMatrixFlat::FromEigen(s.Im, &f->Im);
 		TMatrixFlat::FromEigen(s.dF0, &f->dF0);
 		TMatrixFlat::FromEigen(s.dF1, &f->dF1);
 	}
@@ -270,7 +303,7 @@ void run_model_impl(
 	TMatrix<BatchSize, OutputSize*SeqLength> deSeq = TMatrix<BatchSize, OutputSize*SeqLength>::Zero();
 
 	for (ui32 t=0; t<SeqLength; ++t) {
-		TMatrix<BatchSize, InputSize> x = data.Input.block<BatchSize, InputSize>(0, t*InputSize);
+		TMatrix<BatchSize, InputSize> x = data.I.block<BatchSize, InputSize>(0, t*InputSize);
 
 		// inputSpikesState = x;
 
@@ -283,7 +316,7 @@ void run_model_impl(
 			(feedforward * F0 - u) \
 			+ (fbFactor * deSeq.block<BatchSize, OutputSize>(0, t*OutputSize) * F1.transpose() );
 
-		du -= A0 * R0;
+		// du -= A0 * R0;
 			
 		
 		u += c.Dt * du / c.TauSyn;
@@ -298,8 +331,8 @@ void run_model_impl(
 			data.Output.block<BatchSize, OutputSize>(0, t*OutputSize);
 
 		de = uo_t - uo;
-		if (t < SeqLength-15) {
-			deSeq.block<BatchSize, OutputSize>(0, (t+15)*OutputSize) = de;	
+		if (t < SeqLength-c.FeedbackDelay) {
+			deSeq.block<BatchSize, OutputSize>(0, (t+c.FeedbackDelay)*OutputSize) = de;	
 		}
 		
 
@@ -339,18 +372,23 @@ void run_model_impl(
 		s.dF1 += dF1t / SeqLength;
 
 		s.A0m += (A0 - s.A0m)/c.TauMean;
+		s.A0mm += (A0 - s.A0mm)/c.TauMeanLong;
+		s.Im += (feedforward - s.Im)/c.TauMean;
 
-		stats.Input.block<BatchSize, InputSize>(0, t*InputSize) = inputSpikesState;
-		stats.U.block<BatchSize, LayerSize>(0, t*LayerSize) = u;
-		stats.A.block<BatchSize, LayerSize>(0, t*LayerSize) = A0;
-		stats.Output.block<BatchSize, OutputSize>(0, t*OutputSize) = uo;
-		stats.De.block<BatchSize, OutputSize>(0, t*OutputSize) = de;
-		stats.dF0.row(t) = Eigen::Map<TMatrix<1, InputSize*LayerSize>>(dF0t.data());
-		stats.dA.block<BatchSize, LayerSize>(0, t*LayerSize) = (A0.array() - s.A0m.array()).matrix();
+		stats.I.block(0, t*InputSize, BatchSize, InputSize) = feedforward;
+		stats.Im.block(0, t*InputSize, BatchSize, InputSize) = s.Im;
+		stats.U.block(0, t*LayerSize, BatchSize, LayerSize) = u;
+		stats.A.block(0, t*LayerSize, BatchSize, LayerSize) = A0;
+		stats.Am.block(0, t*LayerSize, BatchSize, LayerSize) = s.A0m;
+		stats.Amm.block(0, t*LayerSize, BatchSize, LayerSize) = s.A0mm;
+		stats.Output.block(0, t*OutputSize, BatchSize, OutputSize) = uo;
+		if (t < SeqLength-c.FeedbackDelay) {
+			stats.De.block(0, (t+c.FeedbackDelay)*OutputSize, BatchSize, OutputSize) = de;
+		}
+		stats.dF0.row(t) = Eigen::Map<TMatrixD>(dF0t.data(), 1, InputSize*LayerSize);
+		stats.dA.block(0, t*LayerSize, BatchSize, LayerSize) = (s.A0m.array() - s.A0mm.array()).matrix();
 	}
 
-	stats.De = deSeq;
-	
 	// if (learn) {
 	// 	F0 += c.LearningRate * s.dF0;
 	// 	// F0 = (F0.array().rowwise())/(F0.colwise().lpNorm<2>().array());

@@ -7,7 +7,7 @@ from binding import run_model, get_structure_info
 from util import *
 from datasets import XorDataset, to_sparse_ts
 
-np.random.seed(10)
+np.random.seed(11)
 
 def relu_deriv(x):
     if isinstance(x, float):
@@ -75,11 +75,13 @@ F0_copy = F0.copy()
 c = Config()
 c.Dt = 1.0
 c.TauSyn = 2.0
-c.FbFactor = 1.0
+c.FbFactor = 0.0
 c.TauMean = 100.0
+c.TauMeanLong = 200.0
 c.Threshold = 0.0
 c.LearningRate = 0.1 * 1.0
 c.Lambda = 0.02
+c.FeedbackDelay = 1
 
 # F0 = 0.1*norm(F0, 1)
 # F1 = 0.1*norm(F1, 1)
@@ -93,17 +95,17 @@ c.F1 = MatrixFlat.from_np(F1)
 
 
 # x = np.zeros((seq_length, batch_size, input_size), dtype=np.float32)
-# x[1,0,0] = 1.0
-# x[10,0,1] = 1.0
-# x[20,0,2] = 1.0
-# x[30,0,3] = 1.0
-# x[40,0,4] = 1.0
+# x[5,0,0] = 1.0
+# x[25,0,1] = 1.0
+# x[45,0,2] = 1.0
+# x[65,0,3] = 1.0
+# x[85,0,4] = 1.0
 # x = smooth_batch_matrix(x, kernel=gauss_filter, sigma=0.0025).astype(np.float32).transpose((1, 0, 2))
 # # x = x.transpose((1, 0, 2))
 
 # y = np.zeros((seq_length, batch_size, output_size), dtype=np.float32)
-# y[19,0,0] = 1.0
-# y[19,0,1] = 1.0
+# y[44,0,0] = 1.0
+# y[44,0,1] = 1.0
 # y = smooth_batch_matrix(y, kernel=gauss_filter, sigma=0.0025).astype(np.float32).transpose((1, 0, 2))
 
 # x = x.reshape((x.shape[0], x.shape[1]*x.shape[2]))
@@ -118,16 +120,14 @@ xt, yt = ds.next_test_batch()
 xt, yt = preprocess(xt, yt)
 
 
-# trainInp = Data() 
-# trainInp.Input = MatrixFlat.from_np(x)
-# trainInp.Output = MatrixFlat.from_np(x)
 
 st_train, st_test = State.alloc(), State.alloc()
 
 epochs = 30
 dF0h = np.zeros((epochs, input_size, layer_size))
 dF1h = np.zeros((epochs, layer_size, output_size))
-# A0mh = np.zeros((epochs, batch_size, layer_size))
+A0mh = np.zeros((epochs, batch_size, layer_size))
+A0mmh = np.zeros((epochs, batch_size, layer_size))
 
 # F0 = norm(F0)
 
@@ -149,37 +149,39 @@ for e in xrange(epochs):
 		x,
 		y
 	)
+
+	if np.any([np.any(np.isnan(getattr(st, v))) for v in dir(st) if v[:2] != "__"]):
+		print "NAN"
+		break
 	
 	dF0h[e] = st_train.dF0
 	dF1h[e] = st_train.dF1
-	# A0mh[e] = st_train.A0m
+	A0mh[e] = st_train.A0m
+	A0mmh[e] = st_train.A0mm
 
-	dF0 = np.zeros(F0.shape)
-
-	xx = rs(x)
-	for i in xrange(seq_length):
-		A = st.A[:, i, :]
-		X = xx[:,i,:] #- np.dot(A, F0.T)
-		
-		# A = np.maximum(A-0.1, 0.0)
-		
-		dF0 += np.dot(X.T, A) / seq_length
+	# dF0 = np.sum([np.dot(st.Im[b].T, st.A[b]-1.05*st.Am[b]) for b in xrange(batch_size)], 0) ** 3
+	# dF0 = np.sum([np.dot(st.Im[b].T, st.A[b]-st.Am[b]) for b in xrange(batch_size)], 0)
+	# dF0 = 0.01*np.mean([np.dot(st.I[b].T, st.A[b]-st.Am[b]) for b in xrange(batch_size)], 0)
 	
+	dF0 = 0.1*np.mean([np.dot(st.I[b].T, st.A[b]-sv.A[b]) for b in xrange(batch_size)], 0)
+
+	# dF0 *= 10.0
+
 	# Outputh[(e*seq_length):((e+1)*seq_length)] = np.transpose(st.Output, (1, 0, 2)).copy()
 	# A0h[(e*seq_length):((e+1)*seq_length)] = np.transpose(st.A, (1, 0, 2)).copy()
 	# dA0h[(e*seq_length):((e+1)*seq_length)] = np.transpose(st.dA, (1, 0, 2)).copy()
 	
 	if e > 30:
-		F0 += 1.0 * c.LearningRate * st_train.dF0
-		F1 += 1.0 * c.LearningRate * st_train.dF1
+		F0 += 1.0 * c.LearningRate * st_train.dF0 #- F0*0.001
+		F1 += 1.0 * c.LearningRate * st_train.dF1 #- F1*0.001
 		
-		# F0 = 0.1*norm(F0, 1)
-		# F1 = 0.1*norm(F1, 1)
+		# F0 = 1.0*norm(F0, 1)
+		# F1 = 1.0*norm(F1, 1)
 		
-		c.F0 = MatrixFlat.from_np(F0)
-		c.F1 = MatrixFlat.from_np(F1)
+		# c.F0 = MatrixFlat.from_np(F0)
+		# c.F1 = MatrixFlat.from_np(F1)
 
-
+		# print "|F0| {:.3f} |F1| {:.3f}".format(np.linalg.norm(F0,2), np.linalg.norm(F1,2))
 	if e % 100 == 0:
 		
 		t1 = time.time()
@@ -193,34 +195,43 @@ for e in xrange(epochs):
 		t0 = time.time()
 
 
-## Ways to solve this problem:
-## 1) Second averaging mechanism on a faster scale
-## 2) Neuron care only about super active nodes
-## 3) Powerful and fast inhibition
+print sv.Output[:,10]
 
-# shm(st.A[1])
+#####
+# 1. Use apical dendritic source to drive learning
+# 2. Use signs of gradient
+
 
 # shl(dF0[0], st_train.dF0[0], show=False, title="0 syn", labels=["Fake", "Real"])
 # shl(dF0[1], st_train.dF0[1], show=False, title="1 syn", labels=["Fake", "Real"])
+# shl(dF0[2], st_train.dF0[2], show=False, title="2 syn", labels=["Fake", "Real"])
 
 
-# de = np.dot(rs(y)[1] - st.Output[1], F1.T) * relu_deriv(st.A[1])
-de = np.dot(st.De[1], F1.T)
+# de = lambda bi: np.dot(rs(y)[bi] - st.Output[bi], F1.T) * relu_deriv(st.A[bi])
+de_fb = np.dot(st.De[1], F1.T) * relu_deriv(st.A[b])
 
-# shl(st.A[1,10,:], de[10,:], labels=["A", "De"], show=False)
 
+# shl(np.mean(st.A[0] - sv.A[0], 0), np.mean(de(0),0))
+
+shl(
+	(np.mean(st.A[1] - st.Am[1],0)), # - st_train.A0m[1]), 
+	(np.mean(sv.A[1],0)), # - st_test.A0m[1]), 
+	np.mean(de_fb, 0),
+	labels=["A", "Av", "De"]
+)
+
+
+# plt.show()
 
 # diff = st.A[1]-de
 # diff_idx = np.argsort(np.sum(np.square(diff),0))[-5:]
 # print diff_idx
 
 
-id=17
-mean_train = np.tile(st_train.A0m[1, id], seq_length)
-mean_test = np.tile(st_test.A0m[1, id], seq_length)
-shl(st.A[1,:,id], sv.A[1,:,id], de[:,id], mean_train, mean_test, labels=["A", "Av", "De", "A0m train", "A0m test"], show=False)
+# id=9
+# shl(st.A[1,:,id], sv.A[1,:,id], de_fb[:,id], st.Am[1,:,id], st.Amm[1,:,id], labels=["A", "Av", "De", "A0m", "A0mm"], show=False)
 
-plt.show()
+# plt.show()
 
 
 # shl(de[:,2], st.A[1][:,2])
@@ -230,3 +241,10 @@ plt.show()
 # shl(st.A[1][:,2], sv.A[1][:,2], de[:,2], labels=["A", "Av", "De"], show=False)
 # plt.show()
 
+
+
+# Epoch 0 (0.001s), error: 17.638, t.error: 17.489, |fb|: 4.199
+# Epoch 1000 (0.803s), error: 17.638, t.error: 17.489, |fb|: 4.199
+# Epoch 2000 (0.699s), error: 17.638, t.error: 17.489, |fb|: 4.199
+# Epoch 3000 (0.690s), error: 17.638, t.error: 17.489, |fb|: 4.199
+# Epoch 4000 (0.693s), error: 17.638, t.error: 17.489, |fb|: 4.19

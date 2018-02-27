@@ -117,22 +117,26 @@ class Config(ct.Structure):
         ("Dt", ct.c_double),
         ("TauSyn", ct.c_double),
         ("TauMean", ct.c_double),
+        ("TauMeanLong", ct.c_double),
         ("Threshold", ct.c_double),
         ("FbFactor", ct.c_double),
         ("LearningRate", ct.c_double),
-        ("Lambda", ct.c_double)
+        ("Lambda", ct.c_double),
+        ("FeedbackDelay", ct.c_uint)
     ]
 
 
 class Data(ct.Structure):
     _fields_ = [
-        ("Input", MatrixFlat),
+        ("I", MatrixFlat),
         ("Output", MatrixFlat),
     ]
 
 class State(StructureWithSizeDescr):
     _fields_ = [
         ("A0m", MatrixFlat),
+        ("A0mm", MatrixFlat),
+        ("Im", MatrixFlat),
         ("dF0", MatrixFlat),
         ("dF1", MatrixFlat),
     ]
@@ -140,6 +144,8 @@ class State(StructureWithSizeDescr):
     _struc_info_ = get_structure_info()
     _size_ = {
         "A0m": (_struc_info_.BatchSize, _struc_info_.LayerSize),
+        "A0mm": (_struc_info_.BatchSize, _struc_info_.LayerSize),
+        "Im": (_struc_info_.BatchSize, _struc_info_.InputSize),
         "dF0": (_struc_info_.InputSize, _struc_info_.LayerSize),
         "dF1": (_struc_info_.LayerSize, _struc_info_.OutputSize),
     }
@@ -147,24 +153,30 @@ class State(StructureWithSizeDescr):
 
 class Statistics(StructureWithSizeDescr):
     _fields_ = [
-        ("Input", MatrixFlat),
+        ("I", MatrixFlat),
+        ("Im", MatrixFlat),
         ("U", MatrixFlat),
         ("A", MatrixFlat),
         ("dA", MatrixFlat),
         ("Output", MatrixFlat),
         ("De", MatrixFlat),
         ("dF0", MatrixFlat),
+        ("Am", MatrixFlat),
+        ("Amm", MatrixFlat),
     ]
 
     _struc_info_ = get_structure_info()
     _size_ = {
-        "Input": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.InputSize),
+        "I": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.InputSize),
+        "Im": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.InputSize),
         "U": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.LayerSize),
         "A": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.LayerSize),
         "dA": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.LayerSize),
         "Output": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.OutputSize),
         "De": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.OutputSize),
         "dF0": (_struc_info_.SeqLength, _struc_info_.InputSize, _struc_info_.LayerSize),
+        "Am": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.LayerSize),
+        "Amm": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.LayerSize),
     }
 
 
@@ -199,11 +211,11 @@ def run_model(epochs, config, train_state, test_state, train_input, train_output
     testStatisticsFlat = Statistics.from_np(testStatistics)
     
     trainInp = Data() 
-    trainInp.Input = MatrixFlat.from_np(train_input)
+    trainInp.I = MatrixFlat.from_np(train_input)
     trainInp.Output = MatrixFlat.from_np(train_output)
 
     testInp = Data() 
-    testInp.Input = MatrixFlat.from_np(test_input)
+    testInp.I = MatrixFlat.from_np(test_input)
     testInp.Output = MatrixFlat.from_np(test_output)
 
     trainStateFlat = State.from_np(train_state)
