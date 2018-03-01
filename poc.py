@@ -88,7 +88,7 @@ b0 = np.zeros((net_size,))
 W1 = 0.1 - 0.2*np.random.random((net_size, output_size))
 b1 = np.zeros((output_size,))
 
-epochs = 1
+epochs = 10000
 lrate = 0.1
 apical_gain = 1000.0
 apical_threshold = 10.0
@@ -111,9 +111,9 @@ for e in xrange(epochs):
     a0 = act(u0)
 
     u1 = np.dot(a0, W1) + b1
-    a1 = u1
+    a1 = act_o(u1)
     
-    de = y - a1 
+    de = y - a1
     
     da0 = np.dot(de, W1.T) * act.deriv(u0)
     
@@ -124,7 +124,7 @@ for e in xrange(epochs):
     
     elif lrule == "hebb":
         fb = np.dot(de, W1.T) * act.deriv(u0)
-        ap = 1.0* (
+        ap = 5.0* (
             sigmoid(apical_gain*np.maximum(fb, 0.0) - apical_threshold) - 
             sigmoid(-apical_threshold)
         )
@@ -136,10 +136,10 @@ for e in xrange(epochs):
         # hb0 = (a0 + ap) - 0.5
         hb0h[e] = hb0.copy()
         
-        W0 += lrate * 0.01 * np.dot(x.T, hb0)
+        W0 += lrate * 0.1 * np.dot(x.T, hb0)
     
 
-    # W1 += lrate * np.dot(a0.T, de)
+    W1 += lrate * np.dot(a0.T, de)
     # W0 = norm(W0)
 
     da0h[e] = da0.copy()
