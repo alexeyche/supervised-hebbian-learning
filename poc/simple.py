@@ -53,8 +53,8 @@ epochs = 1000
 lrate = 0.1 * 1.0
 apical_gain = 1000.0
 apical_threshold = 10.0
-# lrule = "hebb"
-lrule = "bp"
+lrule = "hebb"
+# lrule = "bp"
 
 resolution = 50
 W_0 = np.linspace(0.0, 30.0, resolution)
@@ -106,7 +106,7 @@ for ww0_id, ww0 in enumerate(W_0):
 
             
             # hb0 = sigmoid(np.maximum(fb, 0.0)) - a0
-            hb0 = ap - 0.01*ltd
+            hb0 = ap - ltd
             # hb0 = 0.1 * (ap - a0) #- 0.01
             # hb0 = (a0-0.5) + ap - 0.05
             
