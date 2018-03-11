@@ -7,61 +7,22 @@ from util import *
 from inspect import currentframe, getframeinfo
 import numpy as np
 
-class Act(object):
-    def __call__(self, x):
-        raise NotImplementedError()
-
-    def deriv(self, x):
-        raise NotImplementedError()
-
-class Linear(Act):
-    def __call__(self, x):
-        return x
-
-    def deriv(self, x):
-        if hasattr(x, "shape"):
-            return np.ones(x.shape)
-        return 1.0
-
-class Sigmoid(Act):
-    def __call__(self, x):
-        return 1.0/(1.0 + np.exp(-x))
-
-    def deriv(self, x):
-        v = self(x)
-        return v * (1.0 - v)
-
-
-class Relu(Act):
-    def __call__(self, x):
-        return np.maximum(x, 0.0)
-        
-    def deriv(self, x):
-        if isinstance(x, float):
-            return 1.0 if x > 0.0 else 0.0
-        dadx = np.zeros(x.shape)
-        dadx[np.where(x > 0.0)] = 1.0
-        return dadx
-
-
+from poc.common import *
 
 
 
 act_o = Sigmoid()
-act = Sigmoid()
+act = Relu()
 sigmoid = Sigmoid()
 
-np.random.seed(35) 
+# np.random.seed(22) 
 
 
 input_size = 2
 output_size = 1
 batch_size = 4
 net_size = 30
-num_iters = 100
 step = 0.1
-fb_factor = 0.0
-fb_delay = 1
 
 
 x = np.asarray([
@@ -88,7 +49,7 @@ b0 = np.zeros((net_size,))
 W1 = 0.1 - 0.2*np.random.random((net_size, output_size))
 b1 = np.zeros((output_size,))
 
-epochs = 10000
+epochs = 1000
 lrate = 0.1
 apical_gain = 1000.0
 apical_threshold = 10.0
@@ -117,29 +78,37 @@ for e in xrange(epochs):
     
     da0 = np.dot(de, W1.T) * act.deriv(u0)
     
-    if lrule == "bp":
-        
-
-        W0 += lrate * np.dot(x.T, da0)
     
-    elif lrule == "hebb":
-        fb = np.dot(de, W1.T) * act.deriv(u0)
-        ap = 5.0* (
-            sigmoid(apical_gain*np.maximum(fb, 0.0) - apical_threshold) - 
-            sigmoid(-apical_threshold)
-        )
-        
-        aph[e] = ap.copy()
-        fbh[e] = fb.copy()
+    # ap = sigmoid(1000.0*np.maximum(da0, 0.0)) - 0.5
+    ap = 10.0*(softplus(10.0*np.maximum(da0, 0.0)) - softplus(0.0))
+    # ap = softplus(10.0*np.maximum(da0, 0.0)) - softplus(0.0)
+    # ap = (
+    #     sigmoid(apical_gain*np.maximum(da0, 0.0) - apical_threshold) - 
+    #     sigmoid(-apical_threshold)
+    # )
+    
+    
+    # hb0 = sigmoid(np.maximum(fb, 0.0)) - a0
+    # hb0 = ap 
+    silent_ap = np.where(ap == 0.0)
+    ltd = np.zeros(a0.shape)
+    ltd[silent_ap] = a0[silent_ap]
 
-        hb0 = ap - 0.5
-        # hb0 = (a0 + ap) - 0.5
-        hb0h[e] = hb0.copy()
-        
-        W0 += lrate * 0.1 * np.dot(x.T, hb0)
+    hb0 = ap - ltd
+
+    if lrule == "bp":
+        W0 += lrate * np.dot(x.T, da0 * act.deriv(u0))
+        b0 += lrate * np.mean(da0 * act.deriv(u0), 0)
+        b1 += lrate * np.mean(de, 0)
+
+    elif lrule == "hebb":
+        W0 += lrate * np.dot(x.T, hb0 )
+        b0 += lrate * np.mean(hb0, 0)
+        b1 += lrate * np.mean(de, 0)
     
 
     W1 += lrate * np.dot(a0.T, de)
+    
     # W0 = norm(W0)
 
     da0h[e] = da0.copy()
@@ -149,14 +118,25 @@ for e in xrange(epochs):
     a1h[e] = a1.copy()
     deh[e] = de.copy()
 
+    aph[e] = ap.copy()
+    fbh[e] = da0.copy()
+    hb0h[e] = hb0.copy()
+
     if e % 20 == 0:
         print "{}: E^2 train {:.4f}, %{:.2f} signs".format(e, np.sum(de ** 2.0), 100.0*np.mean(np.sign(hb0) == np.sign(da0)))
 
-
-# shm(np.sign(hb0), np.sign(da0))
+# shm(np.sign(hb0), da0)
 
 # shl(0.03*hb0h[10,1], da0h[10,1], labels=["hebb", "da"])
-e=-1; shl(0.03*hb0h[e,2], da0h[e,2], np.zeros(net_size), labels=["hebb", "da", "0"], show=False)
-e=-1; shl(np.sign(0.03*hb0h[e,2]), np.sign(da0h[e,2]), labels=["hebb", "da"])
+
+b=1
+e=-1; shl(
+    hb0h[e,b],
+    da0h[e,b] * act.deriv(u0h[e,b]), 
+    np.zeros(net_size), 
+    a0h[e,b], 
+    labels=["hebb", "da", "0", "a0"]
+)
+e=-1; shl(np.sign(hb0h[e,b]), np.sign(da0h[e,b] * act.deriv(u0h[e,b])), labels=["hebb", "da"])
 # shl(hb0h[:,1,:])
 plt.show()
