@@ -122,6 +122,7 @@ class Config(ct.Structure):
         ("FbFactor", ct.c_double),
         ("LearningRate", ct.c_double),
         ("Lambda", ct.c_double),
+        ("ApicalGain", ct.c_double),
         ("FeedbackDelay", ct.c_uint)
     ]
 
@@ -160,6 +161,7 @@ class Statistics(StructureWithSizeDescr):
         ("dA", MatrixFlat),
         ("Output", MatrixFlat),
         ("De", MatrixFlat),
+        ("ApicalFeedback", MatrixFlat),
         ("dF0", MatrixFlat),
         ("Am", MatrixFlat),
         ("Amm", MatrixFlat),
@@ -174,6 +176,7 @@ class Statistics(StructureWithSizeDescr):
         "dA": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.LayerSize),
         "Output": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.OutputSize),
         "De": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.OutputSize),
+        "ApicalFeedback": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.OutputSize),
         "dF0": (_struc_info_.SeqLength, _struc_info_.InputSize, _struc_info_.LayerSize),
         "Am": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.LayerSize),
         "Amm": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.LayerSize),

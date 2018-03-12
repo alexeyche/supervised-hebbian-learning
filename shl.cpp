@@ -113,6 +113,7 @@ struct TStatisticsFlat {
 	TMatrixFlat dA;
 	TMatrixFlat Output;
 	TMatrixFlat De;
+	TMatrixFlat ApicalFeedback;
 	TMatrixFlat dF0;
 	TMatrixFlat Am;
 	TMatrixFlat Amm;
@@ -153,6 +154,11 @@ TMatrix<NRows, NCols> ActDeriv(TMatrix<NRows, NCols> x, double threshold) {
 	);
 }
 
+template <int NRows, int NCols>
+TMatrix<NRows, NCols> Sigmoid(TMatrix<NRows, NCols> x) {
+	return 1.0/(1.0+Eigen::exp(-x.array()));
+}
+
 struct TConfig {
 	TMatrixFlat F0;
 	TMatrixFlat R0;
@@ -165,6 +171,7 @@ struct TConfig {
  	double FbFactor;
  	double LearningRate;
  	double Lambda;
+ 	double ApicalGain;
  	ui32 FeedbackDelay;
 };
 
@@ -206,6 +213,7 @@ struct TStatistics {
 	TMatrixD dA;
 	TMatrixD Output;
 	TMatrixD De;
+	TMatrixD ApicalFeedback;
 	TMatrixD dF0;
 	TMatrixD Am;
 	TMatrixD Amm;
@@ -219,6 +227,7 @@ struct TStatistics {
 		o.dA = TMatrixFlat::ToEigenDynamic(s.dA);
 		o.Output = TMatrixFlat::ToEigenDynamic(s.Output);
 		o.De = TMatrixFlat::ToEigenDynamic(s.De);
+		o.ApicalFeedback = TMatrixFlat::ToEigenDynamic(s.ApicalFeedback);
 		o.dF0 = TMatrixFlat::ToEigenDynamic(s.dF0);
 		o.Am = TMatrixFlat::ToEigenDynamic(s.Am);
 		o.Amm = TMatrixFlat::ToEigenDynamic(s.Amm);
@@ -233,6 +242,7 @@ struct TStatistics {
 		TMatrixFlat::FromEigenDynamic(s.dA, &f->dA);
 		TMatrixFlat::FromEigenDynamic(s.Output, &f->Output);
 		TMatrixFlat::FromEigenDynamic(s.De, &f->De);
+		TMatrixFlat::FromEigenDynamic(s.ApicalFeedback, &f->ApicalFeedback);
 		TMatrixFlat::FromEigenDynamic(s.dF0, &f->dF0);
 		TMatrixFlat::FromEigenDynamic(s.Am, &f->Am);
 		TMatrixFlat::FromEigenDynamic(s.Amm, &f->Amm);
@@ -267,6 +277,34 @@ struct TState {
 };
 
 
+template <int BatchSize, int InputSize, int LayerSize>
+class THiddenLayer {
+	THiddenLayer() {
+
+	}
+
+	template <int ffNRows, int ffNCols, int fbNRows, int fbNCols>
+	void Run(TMatrix<ffNRows, ffNCols> ff, TMatrix<fbNRows, fbNCols> fb) {
+		
+		TMatrix<BatchSize, LayerSize> dU = (ff * F - U) + fb;
+
+		U += c.Dt * dU / c.TauSyn;
+		A = Act(U, c.Threshold);
+	}
+
+	TConfig c;
+	
+	TMatrix<InputSize, LayerSize> F;
+
+	TMatrix<BatchSize, LayerSize> U;
+	TMatrix<BatchSize, LayerSize> A;
+	
+	TMatrixD UStat;
+	TMatrixD AStat;
+};
+
+
+
 
 void run_model_impl(
 	TConfig c, 
@@ -291,10 +329,8 @@ void run_model_impl(
 	TMatrix<BatchSize, InputSize> inputSpikesState = \
 		TMatrix<BatchSize, InputSize>::Zero();
 
-	TMatrix<BatchSize, LayerSize> u = \
+	TMatrix<BatchSize, LayerSize> U0 = \
 		TMatrix<BatchSize, LayerSize>::Zero();
-
-	TMatrix<BatchSize, OutputSize> de = TMatrix<BatchSize, OutputSize>::Zero();
 	
 	s.dF0 = TMatrix<InputSize, LayerSize>::Zero();
 	s.dF1 = TMatrix<LayerSize, OutputSize>::Zero();
@@ -304,6 +340,8 @@ void run_model_impl(
 
 	for (ui32 t=0; t<SeqLength; ++t) {
 		TMatrix<BatchSize, InputSize> x = data.I.block<BatchSize, InputSize>(0, t*InputSize);
+		TMatrix<BatchSize, OutputSize> y = \
+			data.Output.block<BatchSize, OutputSize>(0, t*OutputSize);
 
 		// inputSpikesState = x;
 
@@ -311,28 +349,34 @@ void run_model_impl(
 		// TMatrix<BatchSize, InputSize> feedforward = x - A0 * F0.transpose();
 
 		// inputSpikesState += c.Dt * (x - inputSpikesState) / c.TauSyn;
+		TMatrix<BatchSize, OutputSize> feedback = deSeq.block<BatchSize, OutputSize>(0, t*OutputSize);
 
-		TMatrix<BatchSize, LayerSize> du = \
-			(feedforward * F0 - u) \
-			+ (fbFactor * deSeq.block<BatchSize, OutputSize>(0, t*OutputSize) * F1.transpose() );
+		TMatrix<BatchSize, LayerSize> dU0 = \
+			(feedforward * F0 - U0) \
+			+ (fbFactor * feedback * F1.transpose() );
 
 		// du -= A0 * R0;
 			
 		
-		u += c.Dt * du / c.TauSyn;
+		U0 += c.Dt * dU0 / c.TauSyn;
 
-		// layerState += c.Dt * (u - layerState) / c.TauSyn;
+		// layerState += c.Dt * (U0 - layerState) / c.TauSyn;
 
-		A0 = Act(u, c.Threshold);
+		A0 = Act(U0, c.Threshold);
 
-		TMatrix<BatchSize, OutputSize> uo = A0 * F1;
+		TMatrix<BatchSize, OutputSize> Uout = A0 * F1;
+		TMatrix<BatchSize, OutputSize> Aout = Uout;
 
-		TMatrix<BatchSize, OutputSize> uo_t = \
-			data.Output.block<BatchSize, OutputSize>(0, t*OutputSize);
-
-		de = uo_t - uo;
+		
+		TMatrix<BatchSize, OutputSize> de = y - Aout;
+		
+		TMatrix<BatchSize, OutputSize> dePos = c.ApicalGain * de.cwiseMax(0.0);
+		TMatrix<BatchSize, OutputSize> apicalFeedback = 2.0 * (
+			Sigmoid(dePos).array() - 0.5
+		);
+		
 		if (t < SeqLength-c.FeedbackDelay) {
-			deSeq.block<BatchSize, OutputSize>(0, (t+c.FeedbackDelay)*OutputSize) = de;	
+			deSeq.block<BatchSize, OutputSize>(0, (t+c.FeedbackDelay)*OutputSize) = apicalFeedback;	
 		}
 		
 
@@ -342,34 +386,12 @@ void run_model_impl(
 				(ActDeriv(A0, c.Threshold).array())
 			).matrix();
 
-		// TMatrix<InputSize, LayerSize> dF0t = \
-		// 	feedforward.transpose() * A0;
-		
-		// TMatrix<InputSize, LayerSize> dF0t = \
-			// feedforward.transpose() * ((A0.array() - c.Lambda)).matrix();
-		
-		// TMatrix<InputSize, LayerSize> dF0t = \
-		// 	feedforward.transpose() * ((A0.array() - s.A0m.array())).matrix();
-
-		// TMatrix<InputSize, LayerSize> dF0t = \
-			// feedforward.transpose() * (A0. array() * (A0.array() - s.A0m.array())).matrix();
-
-
-		// TMatrix<InputSize, LayerSize> dF0t = \
-			// (feedforward.transpose() * A0) - (c.Lambda * F0.array()).matrix();
-
-		// TMatrix<InputSize, LayerSize> dF0t = \
-			// ((feedforward - A0 * F0.transpose()).transpose() * A0);
-		// TMatrix<InputSize, LayerSize> dF0t = \
-		// 	(feedforward.transpose() * (a.array() - 0.02).matrix());
-
-
 		TMatrix<LayerSize, OutputSize> dF1t = \
 			A0.transpose() * de;
 
 
-		s.dF0 += dF0t / SeqLength;
-		s.dF1 += dF1t / SeqLength;
+		// s.dF0 += dF0t / SeqLength;
+		// s.dF1 += dF1t / SeqLength;
 
 		s.A0m += (A0 - s.A0m)/c.TauMean;
 		s.A0mm += (A0 - s.A0mm)/c.TauMeanLong;
@@ -377,13 +399,14 @@ void run_model_impl(
 
 		stats.I.block(0, t*InputSize, BatchSize, InputSize) = feedforward;
 		stats.Im.block(0, t*InputSize, BatchSize, InputSize) = s.Im;
-		stats.U.block(0, t*LayerSize, BatchSize, LayerSize) = u;
+		stats.U.block(0, t*LayerSize, BatchSize, LayerSize) = U0;
 		stats.A.block(0, t*LayerSize, BatchSize, LayerSize) = A0;
 		stats.Am.block(0, t*LayerSize, BatchSize, LayerSize) = s.A0m;
 		stats.Amm.block(0, t*LayerSize, BatchSize, LayerSize) = s.A0mm;
-		stats.Output.block(0, t*OutputSize, BatchSize, OutputSize) = uo;
+		stats.Output.block(0, t*OutputSize, BatchSize, OutputSize) = Aout;
 		if (t < SeqLength-c.FeedbackDelay) {
 			stats.De.block(0, (t+c.FeedbackDelay)*OutputSize, BatchSize, OutputSize) = de;
+			stats.ApicalFeedback.block(0, (t+c.FeedbackDelay)*OutputSize, BatchSize, OutputSize) = apicalFeedback;
 		}
 		stats.dF0.row(t) = Eigen::Map<TMatrixD>(dF0t.data(), 1, InputSize*LayerSize);
 		stats.dA.block(0, t*LayerSize, BatchSize, LayerSize) = (s.A0m.array() - s.A0mm.array()).matrix();

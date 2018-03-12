@@ -75,13 +75,14 @@ F0_copy = F0.copy()
 c = Config()
 c.Dt = 1.0
 c.TauSyn = 2.0
-c.FbFactor = 0.0
+c.FbFactor = 1.0
 c.TauMean = 100.0
 c.TauMeanLong = 200.0
 c.Threshold = 0.0
 c.LearningRate = 0.1 * 1.0
 c.Lambda = 0.02
-c.FeedbackDelay = 1
+c.FeedbackDelay = 15
+c.ApicalGain = 10.0
 
 # F0 = 0.1*norm(F0, 1)
 # F1 = 0.1*norm(F1, 1)
@@ -127,7 +128,7 @@ xt, yt = preprocess(xt, yt)
 
 st_train, st_test = State.alloc(), State.alloc()
 
-epochs = 5000
+epochs = 1
 dF0h = np.zeros((epochs, input_size, layer_size))
 dF1h = np.zeros((epochs, layer_size, output_size))
 A0mh = np.zeros((epochs, batch_size, layer_size))
