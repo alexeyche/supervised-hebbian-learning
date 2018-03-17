@@ -4,139 +4,120 @@ from matplotlib import pyplot as plt
 from matplotlib.pyplot import cm
 import numpy as np
 from util import *
-from inspect import currentframe, getframeinfo
 import numpy as np
 
 from poc.common import *
+from datasets import XorDataset
+
+# np.random.seed(10)
+
+class Layer(object):
+    def __init__(self, input_size, layer_size, feedback_size, act):
+        self.input_size = input_size
+        self.layer_size = layer_size
+        self.feedback_size = feedback_size
+        self.act = act
+        
+        self.W = 0.1 - 0.2*np.random.random((input_size, layer_size))
+        self.b = np.zeros((layer_size,))
+
+
+    def run_feedforward(s, I):
+        u = np.dot(I, s.W) + s.b
+        a = s.act(u)
+        return u, a
+
+    def __repr__(self):
+        return "Layer({};{};{})".format(self.input_size, self.layer_size, self.feedback_size)
+
+
+def no_gradient_postproc(dE, a):
+    return dE
+
+def ltd(dE, a):
+    silent_ap = np.where(dE <= 0.0)
+    ltd = np.zeros(a.shape)
+    ltd[silent_ap] = a[silent_ap]
+    return ltd 
+
+def positive_postproc(dE, a):
+    return np.maximum(dE, 0.0) - ltd(dE, a)
+
+def nonlinear_postproc(dE, a):
+    return \
+        2.0*(sigmoid(100.0*np.maximum(dE, 0.0)) - 0.5) - ltd(dE, a)
 
 
 
-act_o = Sigmoid()
-act = Relu()
-sigmoid = Sigmoid()
+gradient_postproc = nonlinear_postproc
+ds = XorDataset()
+x_shape, y_shape = ds.train_shape
 
-# np.random.seed(22) 
-
-
-input_size = 2
-output_size = 1
-batch_size = 4
-net_size = 30
-step = 0.1
-
-
-x = np.asarray([
-    [0.0, 0.0],
-    [1.0, 0.0],
-    [0.0, 1.0],
-    [1.0, 1.0],
-])
-
-y = np.asarray([
-    [0.0],
-    [1.0],
-    [1.0],
-    [0.0]
-])
-
-
-W0 = 0.1 - 0.2*np.random.random((input_size, net_size))
-b0 = np.zeros((net_size,))
-
-# W0 = norm(W0)
-
-
-W1 = 0.1 - 0.2*np.random.random((net_size, output_size))
-b1 = np.zeros((output_size,))
-
-epochs = 1000
+batch_size, input_size = x_shape
+batch_size, output_size = y_shape
 lrate = 0.1
-apical_gain = 1000.0
-apical_threshold = 10.0
-lrule = "hebb"
-# lrule = "bp"
 
-u0h = np.zeros((epochs, batch_size, net_size))
-a0h = np.zeros((epochs, batch_size, net_size))
-u1h = np.zeros((epochs, batch_size, output_size))
-a1h = np.zeros((epochs, batch_size, output_size))
-deh = np.zeros((epochs, batch_size, output_size))
-aph = np.zeros((epochs, batch_size, net_size))
-fbh = np.zeros((epochs, batch_size, net_size))
-da0h = np.zeros((epochs, batch_size, net_size))
-hb0h = np.zeros((epochs, batch_size, net_size))
+net_struct = (100, 100, output_size)
 
-for e in xrange(epochs):
+net = tuple([
+    Layer(inp_size, lsize, fb_size, act) 
+    for inp_size, lsize, fb_size, act in 
+        zip(
+            (input_size,) + net_struct[:-1], 
+            net_struct, 
+            net_struct[1:] + (None,),
+            (Relu(),)*(len(net_struct)-1) + (Sigmoid(),)
+        )
+])
 
-    u0 = np.dot(x, W0)        
-    a0 = act(u0)
+a_stat = [np.zeros((batch_size, l.layer_size)) for l in net]
+u_stat = [np.zeros((batch_size, l.layer_size)) for l in net]
+dE_stat = [np.zeros((batch_size, l.layer_size)) for l in net]
 
-    u1 = np.dot(a0, W1) + b1
-    a1 = act_o(u1)
+epochs = 10000
+
+stat = np.zeros((epochs, len(net_struct)-1, 1))
+
+for epoch in xrange(epochs):
+    x_target, y_target = ds.next_train_batch()
+
+    I = x_target
+    for l_idx, l in enumerate(net):
+        u, a = l.run_feedforward(I)
+
+        a_stat[l_idx] = a.copy()
+        u_stat[l_idx] = u.copy()
+
+        I = a
+
+    y = I
+
+    dE = y_target - y
     
-    de = y - a1
+    net[-1].W += lrate * np.dot(a_stat[-2].T, dE)
+    net[-1].b += lrate * np.mean(dE, 0)
     
-    da0 = np.dot(de, W1.T) * act.deriv(u0)
+    dE_stat[-1] = dE.copy()
     
-    
-    # ap = sigmoid(1000.0*np.maximum(da0, 0.0)) - 0.5
-    ap = 10.0*(softplus(10.0*np.maximum(da0, 0.0)) - softplus(0.0))
-    # ap = softplus(10.0*np.maximum(da0, 0.0)) - softplus(0.0)
-    # ap = (
-    #     sigmoid(apical_gain*np.maximum(da0, 0.0) - apical_threshold) - 
-    #     sigmoid(-apical_threshold)
-    # )
-    
-    
-    # hb0 = sigmoid(np.maximum(fb, 0.0)) - a0
-    # hb0 = ap 
-    silent_ap = np.where(ap == 0.0)
-    ltd = np.zeros(a0.shape)
-    ltd[silent_ap] = a0[silent_ap]
+    for l_idx, (l, l_next, u, a, I) in reversed(
+        tuple(
+            enumerate(
+                zip(net[:-1], net[1:], u_stat[:-1], a_stat[:-1], (x_target,) + tuple(a_stat[:-1]))
+            )
+        )
+    ):
+        dE_actual = np.dot(dE, l_next.W.T) * l.act.deriv(u)
+        dE = gradient_postproc(dE_actual, a)
+        stat[epoch, l_idx] = np.mean(np.sign(dE_actual) == np.sign(dE))
+        
+        l.W += lrate * np.dot(I.T, dE)
+        l.b += lrate * np.mean(dE, 0)
 
-    hb0 = ap - ltd
+        dE_stat[l_idx] = dE.copy()
 
-    if lrule == "bp":
-        W0 += lrate * np.dot(x.T, da0 * act.deriv(u0))
-        b0 += lrate * np.mean(da0 * act.deriv(u0), 0)
-        b1 += lrate * np.mean(de, 0)
 
-    elif lrule == "hebb":
-        W0 += lrate * np.dot(x.T, hb0 )
-        b0 += lrate * np.mean(hb0, 0)
-        b1 += lrate * np.mean(de, 0)
-    
+    if epoch % 100 == 0:
+        print "{}: E^2 train {:.4f}".format(epoch, np.sum(dE ** 2.0))
 
-    W1 += lrate * np.dot(a0.T, de)
-    
-    # W0 = norm(W0)
-
-    da0h[e] = da0.copy()
-    u0h[e] = u0.copy()
-    a0h[e] = a0.copy()
-    u1h[e] = u1.copy()
-    a1h[e] = a1.copy()
-    deh[e] = de.copy()
-
-    aph[e] = ap.copy()
-    fbh[e] = da0.copy()
-    hb0h[e] = hb0.copy()
-
-    if e % 20 == 0:
-        print "{}: E^2 train {:.4f}, %{:.2f} signs".format(e, np.sum(de ** 2.0), 100.0*np.mean(np.sign(hb0) == np.sign(da0)))
-
-# shm(np.sign(hb0), da0)
-
-# shl(0.03*hb0h[10,1], da0h[10,1], labels=["hebb", "da"])
-
-b=1
-e=-1; shl(
-    hb0h[e,b],
-    da0h[e,b] * act.deriv(u0h[e,b]), 
-    np.zeros(net_size), 
-    a0h[e,b], 
-    labels=["hebb", "da", "0", "a0"]
-)
-e=-1; shl(np.sign(hb0h[e,b]), np.sign(da0h[e,b] * act.deriv(u0h[e,b])), labels=["hebb", "da"])
-# shl(hb0h[:,1,:])
-plt.show()
+# shl(dE_actual[1], dE[1], a_stat[0][1], labels=["dE_actual", "dE", "A"])
+shl(a_stat[1].T)

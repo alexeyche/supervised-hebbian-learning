@@ -39,3 +39,4 @@ class Relu(Act):
 
 
 softplus = lambda x: np.log(1.0 + np.exp(x))
+sigmoid = Sigmoid()
