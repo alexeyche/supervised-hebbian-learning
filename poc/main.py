@@ -12,9 +12,10 @@ from datasets import *
 # np.random.seed(10)
 
 
-gradient_postproc = nonlinear_postproc
+gradient_postproc = hebb_postproc
 # ds = XorDataset()
 ds = ToyDataset()
+# ds = MNISTDataset()
 x_shape, y_shape = ds.train_shape
 
 batch_size, input_size = x_shape
@@ -23,9 +24,9 @@ batch_size, output_size = y_shape
 xt_shape, yt_shape = ds.test_shape
 test_batch_size = xt_shape[0]
 
-lrate = 0.005
+lrate = 0.000001
 
-net = build_network(input_size, (100, 100, output_size))
+net = build_network(input_size, (100, output_size))
 
 at_stat = [np.zeros((test_batch_size, l.layer_size)) for l in net]
 ut_stat = [np.zeros((test_batch_size, l.layer_size)) for l in net]
@@ -33,21 +34,32 @@ dE_stat = [np.zeros((batch_size, l.layer_size)) for l in net]
 
 epochs = 10000
 
-stat = np.zeros((epochs, len(net)-1, 1))
+stat_h = np.zeros((epochs, len(net)-1, 1))
 
 for epoch in xrange(epochs):
-    derivatives, a_stat, u_stat, m  = run_feedforward(
+    kwargs = {}
+    # if epoch == 999:
+    #     kwargs["plot"] = True
+
+    derivatives, st, m  = run_feedforward(
         net, 
         ds, 
         is_train_phase=True, 
-        gradient_postproc=gradient_postproc
+        gradient_postproc=gradient_postproc,
+        **kwargs
     )
 
-    _, at_stat, ut_stat, mt = run_feedforward(
+    _, stt, mt = run_feedforward(
         net, 
         ds, 
         is_train_phase=False, 
+        gradient_postproc=None
     )
+
+    a_stat, u_stat, stat, dE_stat = st
+    at_stat, ut_stat, statt, dE_stat_t = stt
+
+    stat_h[epoch] = stat.copy()
 
     for l, (dW, db) in zip(net, derivatives):
         l.W += lrate * dW

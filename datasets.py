@@ -73,8 +73,8 @@ def get_toy_data_mclass():
     )
     return x_values, y_values.astype(np.int32)
 
-def one_hot_encode(target_v):
-    y_v = np.zeros((target_v.shape[0], len(np.unique(target_v))))
+def one_hot_encode(target_v, size=None):
+    y_v = np.zeros((target_v.shape[0], size if not size is None else len(np.unique(target_v))))
     for cl_id, cl_v in enumerate(np.unique(target_v)):
         y_v[np.where(target_v==cl_v)[0], cl_id] = 1.0
 
@@ -175,7 +175,7 @@ class MNISTDataset(Dataset):
 
     @property
     def train_batches_num(self):
-        return 10
+        return self._train_batch_size
 
     @property
     def test_batches_num(self):

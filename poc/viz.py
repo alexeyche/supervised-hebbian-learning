@@ -51,21 +51,22 @@ def run_net(net, params, ds, gradient_postproc, learn=False):
 
 
     se, ll, er = m
-    return se
+    return ll
 
 
 gradient_postproc = no_gradient_postproc
-ds = XorDataset()
-# ds = ToyDataset()
+# ds = XorDataset()
+ds = ToyDataset()
+# ds = MNISTDataset()
 x_shape, y_shape = ds.train_shape
 
 _, input_size = x_shape
 _, output_size = y_shape
 
 
-lrate = 0.01
+lrate = 0.001
 
-net = build_network(input_size, (100, output_size))
+net = build_network(input_size, (300, output_size))
 
 epochs = 1000
 params = np.zeros((epochs, read_vec(net).shape[0]))
@@ -74,12 +75,12 @@ for epoch in xrange(epochs):
     sigma = read_vec(net)
 
     params[epoch] = sigma
-    errors[epoch] = run_net(net, sigma, ds, gradient_postproc, learn=True)
+    errors[epoch] = run_net(net, sigma, ds, positive_postproc, learn=True)
     if epoch % 100 == 0:
         print epoch
 
 
-pca = RandomizedPCA(n_components=2, whiten=False, iterated_power=2)
+pca = RandomizedPCA(n_components=2, whiten=False)
 
 params_to_fit = params[:-1].copy()
 for epoch in xrange(epochs-1):

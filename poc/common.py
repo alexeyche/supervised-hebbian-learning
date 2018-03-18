@@ -2,6 +2,7 @@
 import numpy as np
 from sklearn.metrics import log_loss
 from datasets import one_hot_encode
+from util import *
 
 class Act(object):
     def __call__(self, x):
@@ -39,6 +40,16 @@ class Relu(Act):
         dadx[np.where(x > 0.0)] = 1.0
         return dadx
 
+class ReluBound(Act):
+    def __call__(self, x):
+        return np.minimum(np.maximum(x, 0.0), 5.0)
+        
+    def deriv(self, x):
+        if isinstance(x, float):
+            return 1.0 if x > 0.0 else 0.0
+        dadx = np.zeros(x.shape)
+        dadx[np.where(x > 0.0)] = 1.0
+        return dadx
 
 softplus = lambda x: np.log(1.0 + np.exp(x))
 sigmoid = Sigmoid()
@@ -72,7 +83,7 @@ def build_network(input_size, net_struct):
                 (input_size,) + net_struct[:-1], 
                 net_struct, 
                 net_struct[1:] + (None,),
-                (Relu(),)*(len(net_struct)-1) + (Sigmoid(),)
+                (ReluBound(),)*(len(net_struct)-1) + (Sigmoid(),)
             )
     ])
 
@@ -94,11 +105,25 @@ def nonlinear_postproc(dE, a):
     return \
         1.0*(sigmoid(100.0*np.maximum(dE, 0.0)) - 0.5) - ltd(dE, a)
 
+mean_factor = 5.0
 
+def hebb_postproc(dE, a):
+    dE = 10.0*(sigmoid(100.0*np.maximum(dE, 0.0)) - 0.5) + a
+    # shl(dE[0], (dE * np.sign(dE - 0.3))[0])
+    return dE * np.sign(dE - mean_factor*np.mean(a))
 
-def update_derivatives(derivatives, net, u_stat, a_stat, x_target, y_target, gradient_postproc):
+def update_derivatives(
+    derivatives, 
+    net, 
+    u_stat, 
+    a_stat, 
+    stat,
+    x_target,
+    y_target, 
+    gradient_postproc,
+    **kwargs
+):
     dE_stat = [None]*len(net)
-    stat = np.zeros(((len(net)-1), 1))
 
     y = a_stat[-1]
     dE = y_target - y
@@ -117,8 +142,12 @@ def update_derivatives(derivatives, net, u_stat, a_stat, x_target, y_target, gra
     ):
         dE_actual = np.dot(dE, l_next.W.T) * l.act.deriv(u)
         dE = gradient_postproc(dE_actual, a)
+
+        if kwargs.get("plot"):
+
+            shl(dE_actual[0]*10.0, dE[0], a[0], np.asarray([mean_factor*np.mean(a)]*a.shape[1]), labels=["dE actual", "dE", "a", "am"])
         
-        stat[l_idx,0] = np.mean(np.sign(dE_actual) == np.sign(dE))
+        stat[l_idx,0] += np.mean(np.sign(dE_actual) == np.sign(dE))
         
         derivatives[l_idx][0] += np.dot(I.T, dE)
         derivatives[l_idx][1] += np.mean(dE, 0)
@@ -128,20 +157,25 @@ def update_derivatives(derivatives, net, u_stat, a_stat, x_target, y_target, gra
     return derivatives, dE_stat, stat
 
 
-def run_feedforward(net, ds, is_train_phase, gradient_postproc=None):
+def run_feedforward(net, ds, is_train_phase, gradient_postproc, **kwargs):
     x_shape, y_shape = ds.train_shape if is_train_phase else ds.test_shape
     batches_num = ds.train_batches_num if is_train_phase else ds.test_batches_num
-    
 
-    batch_size, input_size = x_shape
-    batch_size, output_size = y_shape
+    stat = np.zeros(((len(net)-1), 1))
+ 
+    batch_size = ds.train_batch_size if is_train_phase else ds.test_batch_size
+    
+    _, input_size = x_shape
+    _, output_size = y_shape
 
     a_stat = [np.zeros((batch_size, l.layer_size)) for l in net]
     u_stat = [np.zeros((batch_size, l.layer_size)) for l in net]
+    dE_stat = None
 
     derivatives = [[np.zeros(l.W.shape), np.zeros(l.b.shape)] for l in net]
 
     se, ll, er = 0.0, 0.0, 0.0
+
     for bi in xrange(batches_num):
         x_target, y_target = ds.next_train_batch() if is_train_phase else ds.next_test_batch()
 
@@ -154,22 +188,29 @@ def run_feedforward(net, ds, is_train_phase, gradient_postproc=None):
 
             I = a
         
-        se += np.sum(np.square(y_target - a_stat[-1]))/batches_num/batch_size
-        ll += log_loss(y_target, a_stat[-1])/batches_num/batch_size
-        er += np.mean(np.not_equal(one_hot_encode(np.argmax(a_stat[-1], axis=1)), y_target))
+        se += np.sum(np.square(y_target - a_stat[-1])) / batches_num / batch_size
+        ll += log_loss(y_target, a_stat[-1])
+        er += np.mean(
+            np.not_equal(
+                one_hot_encode(np.argmax(a_stat[-1], axis=1), a_stat[-1].shape[1]), 
+                y_target
+            )
+        )
 
         if is_train_phase:
-            update_derivatives(
+            _, dE_stat, stat = update_derivatives(
                 derivatives,
                 net, 
                 u_stat, 
-                a_stat, 
+                a_stat,
+                stat, 
                 x_target, 
                 y_target, 
-                gradient_postproc
+                gradient_postproc,
+                **kwargs
             )
 
-    
-    return derivatives, a_stat, u_stat, (se, ll, er)
+        
+    return derivatives, (a_stat, u_stat, stat, dE_stat), (se, ll, er)
 
 
