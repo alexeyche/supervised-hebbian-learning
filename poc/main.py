@@ -7,6 +7,7 @@ from util import *
 import numpy as np
 
 from poc.common import *
+from poc.opt import *
 from datasets import *
 
 # np.random.seed(10)
@@ -24,15 +25,22 @@ batch_size, output_size = y_shape
 xt_shape, yt_shape = ds.test_shape
 test_batch_size = xt_shape[0]
 
-lrate = 0.000001
 
-net = build_network(input_size, (100, output_size))
+net = build_network(input_size, (100, output_size), (100.0, 0.0))
+
+
+# opt = SGDOpt((1e-05,) * 4)
+# opt = MomentumOpt((1e-07,) * 4, 0.9)
+# opt = AdamOpt((1e-04,) * 4, 0.99)
+opt = AdagradOpt((1e-02,)*4)
+
+opt.init(*[t for l in net for t in (l.W, l.b)])
 
 at_stat = [np.zeros((test_batch_size, l.layer_size)) for l in net]
 ut_stat = [np.zeros((test_batch_size, l.layer_size)) for l in net]
 dE_stat = [np.zeros((batch_size, l.layer_size)) for l in net]
 
-epochs = 10000
+epochs = 15000
 
 stat_h = np.zeros((epochs, len(net)-1, 1))
 
@@ -61,9 +69,13 @@ for epoch in xrange(epochs):
 
     stat_h[epoch] = stat.copy()
 
-    for l, (dW, db) in zip(net, derivatives):
-        l.W += lrate * dW
-        l.b += lrate * db
+    # [tt for l in net for tt in (l.W, l.b)]
+    
+    opt.update(*[-t for pair in derivatives for t in pair])
+
+    # for l, (dW, db) in zip(net, derivatives):
+    #     l.W += lrate * dW
+    #     l.b += lrate * db
 
 
     se, ll, er = m

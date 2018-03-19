@@ -55,19 +55,24 @@ softplus = lambda x: np.log(1.0 + np.exp(x))
 sigmoid = Sigmoid()
 
 class Layer(object):
-    def __init__(self, input_size, layer_size, feedback_size, act):
+    def __init__(self, input_size, layer_size, feedback_size, act, tau_m):
         self.input_size = input_size
         self.layer_size = layer_size
         self.feedback_size = feedback_size
         self.act = act
-        
+        self.tau_m = tau_m
+
         self.W = 0.1 - 0.2*np.random.random((input_size, layer_size))
         self.b = np.zeros((layer_size,))
-
+        self.am = np.zeros((layer_size,))
 
     def run_feedforward(s, I):
         u = np.dot(I, s.W) + s.b
-        a = s.act(u)
+        if s.tau_m > 0.01:
+            a = s.act(u - s.am)
+            s.am += (np.mean(a, 0) - s.am)/s.tau_m
+        else:
+            a = s.act(u)
         return u, a
 
     def __repr__(self):
@@ -75,7 +80,7 @@ class Layer(object):
 
 
     
-def build_network(input_size, net_struct):
+def build_network(input_size, net_struct, tau_mean_arr):
     return tuple([
         Layer(*params) 
         for params in 
@@ -83,7 +88,8 @@ def build_network(input_size, net_struct):
                 (input_size,) + net_struct[:-1], 
                 net_struct, 
                 net_struct[1:] + (None,),
-                (ReluBound(),)*(len(net_struct)-1) + (Sigmoid(),)
+                (ReluBound(),)*(len(net_struct)-1) + (Sigmoid(),),
+                tau_mean_arr
             )
     ])
 
@@ -105,7 +111,7 @@ def nonlinear_postproc(dE, a):
     return \
         1.0*(sigmoid(100.0*np.maximum(dE, 0.0)) - 0.5) - ltd(dE, a)
 
-mean_factor = 5.0
+mean_factor = 3.0
 
 def hebb_postproc(dE, a):
     dE = 10.0*(sigmoid(100.0*np.maximum(dE, 0.0)) - 0.5) + a
