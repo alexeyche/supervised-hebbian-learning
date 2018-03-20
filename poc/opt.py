@@ -61,10 +61,31 @@ class AdagradOpt(Optimization):
 	def update(self, *dparams):
 		assert len(self.cache) == len(dparams)
 
-		self.cache = [ dp_cache + np.square(dp) for dp_cache, dp in zip(self.cache, dparams)]
+		for pi, dparam in enumerate(dparams):
+			self.cache[pi] += np.square(dparam) 
+			self.params[pi] -= self.learning_rates[pi] * dparam / (np.sqrt(self.cache[pi]) + self.eps)
+
+
+class AdadeltaOpt(Optimization):
+	def __init__(self, learning_rates, gamma, eps=1e-05):
+		self.learning_rates = learning_rates
+		self.eps = eps
+		self.cache = []
+		self.params = list()
+		self.gamma = gamma
+		
+	def init(self, *params):
+		self.cache = [np.zeros(p.shape) for p in params]
+		self.params = list(params)
+
+	def update(self, *dparams):
+		assert len(self.cache) == len(dparams)
 
 		for pi, dparam in enumerate(dparams):
+			self.cache[pi] = self.gamma * self.cache[pi] + (1.0 - self.gamma) * np.square(dparam)
 			self.params[pi] -= self.learning_rates[pi] * dparam / (np.sqrt(self.cache[pi]) + self.eps)
+
+
 
 
 class RMSPropOpt(Optimization):
