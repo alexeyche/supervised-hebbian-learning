@@ -31,8 +31,9 @@ net = build_network(input_size, (100, output_size), (100.0, 0.0))
 
 # opt = SGDOpt((1e-05,) * 4)
 # opt = MomentumOpt((1e-07,) * 4, 0.9)
-# opt = AdamOpt((1e-04,) * 4, 0.99)
-opt = AdagradOpt((1e-02,)*4)
+opt = AdamOpt((1e-04,) * 4, 0.9)
+# opt = AdagradOpt((1e-02,)*4)
+# opt = AdadeltaOpt((1e-04,)*4, 0.9)
 
 opt.init(*[t for l in net for t in (l.W, l.b)])
 

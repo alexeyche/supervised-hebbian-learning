@@ -41,7 +41,7 @@ def quantize_data(x, dest_size):
 
 
 def get_toy_data_baseline():
-    return get_toy_data(4, 200, 2, 3)
+    return get_toy_data(4, 200, 2, 5)
 
 def get_toy_data(dest_dim, size, n_classes=2, seed=2):
     x_values, y_values = make_classification(
@@ -52,8 +52,6 @@ def get_toy_data(dest_dim, size, n_classes=2, seed=2):
         n_repeated=0,
         n_clusters_per_class=2,
         n_classes=n_classes,
-        scale=0.1,
-        shift=5.0,
         random_state=seed
     )
     return x_values, y_values.astype(np.int32)
