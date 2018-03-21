@@ -1,16 +1,11 @@
-import logging
+
 import sys
 import ctypes as ct
 import numpy as np
 from numpy.ctypeslib import ndpointer
 import os
-c_float_p = ct.POINTER(ct.c_float)
 
-# lib_dir = os.path.dirname(os.path.realpath(__file__))
-
-
-lib_dir = "/Users/aleksei/distr/supervised-hebbian-learning"
-# lib_dir = "/home/alexeyche/prog/supervised-hebbian-learning"
+lib_dir = os.path.dirname(os.path.realpath(__file__))
 _shllib = np.ctypeslib.load_library('libshl', lib_dir)
 
 
@@ -52,14 +47,14 @@ class MatrixFlat(ct.Structure):
         assert len(m.shape) == 2, "Need shape 2 for matrix"
 
         o = MatrixFlat()
-        o.Data = m.ctypes.data_as(c_float_p)
+        o.Data = m.ctypes.data_as(ct.POINTER(ct.c_float))
         o.NRows = m.shape[0]
         o.NCols = m.shape[1]
         return o
 
 
     _fields_ = [
-        ("Data", c_float_p),
+        ("Data", ct.POINTER(ct.c_float)),
         ("NRows", ct.c_uint),
         ("NCols", ct.c_uint)
     ]
@@ -82,61 +77,74 @@ class ComplexStructure(ct.Structure):
         self._np_values_dict = {}
 
         for k, v in kwargs.iteritems():
-            assert k in self._fields_dict, "Failed to find {} in fields of {}".format(k, self)
-            if self._fields_dict[k] == MatrixFlat:
-                assert isinstance(v, np.ndarray), \
-                    "Expecting numpy matrix as input for field {}".format(k)
+            self.set(k, v)  
 
-                s = v.shape
-                if len(s) == 2:
-                    self._np_values_dict[k] = (
-                        v
-                            .copy()
-                            .astype(np.float32),
-                        v.shape
-                    )
-                elif len(s) == 3:
-                    self._np_values_dict[k] = (
-                        v
-                            .copy()
-                            .reshape(s[0], s[1]*s[2])
-                            .astype(np.float32),
-                        v.shape
-                    )
-                else:
-                    raise Exception("Other shapes are not supported")
+    def get(self, k):
+        assert k in self._fields_dict, "Unknown key value: {}".format(k)
+        if self._fields_dict[k] == MatrixFlat:
+            m_raw, orig_shape = self._np_values_dict[k]
+            return reshape_from_flat(m_raw, orig_shape)
+        else:
+            return getattr(self, k)
 
-                setattr(self, k, MatrixFlat.from_np(self._np_values_dict[k][0]))
+    def set(self, k, v):
+        assert k in self._fields_dict, "Failed to find {} in fields of {}".format(k, self)
+        if self._fields_dict[k] == MatrixFlat:
+            assert isinstance(v, np.ndarray), \
+                "Expecting numpy matrix as input for field {}".format(k)
+
+            s = v.shape
+            if len(s) == 2:
+                self._np_values_dict[k] = (
+                    v
+                        .copy()
+                        .astype(np.float32),
+                    v.shape
+                )
+            elif len(s) == 3:
+                self._np_values_dict[k] = (
+                    v
+                        .copy()
+                        .reshape(s[0], s[1]*s[2])
+                        .astype(np.float32),
+                    v.shape
+                )
             else:
-                setattr(self, k, v)
+                raise Exception("Other shapes are not supported")
+
+            setattr(self, k, MatrixFlat.from_np(self._np_values_dict[k][0]))
+                    
+        else:
+            setattr(self, k, v)
 
 
 
-    def get_matrix(self, name):
-        assert name in self._np_values_dict
-        m_raw, orig_shape = self._np_values_dict[name]
-        return reshape_from_flat(m_raw, orig_shape)
-
-class Config(ComplexStructure):
-    _fields_ = [
-        ("Dt", ct.c_double),
-        ("LearningRate", ct.c_double),
-        ("FeedbackDelay", ct.c_uint)
-    ]
-
-class Data(ct.Structure):
+class Data(ComplexStructure):
     _fields_ = [
         ("X", MatrixFlat),
         ("Y", MatrixFlat),
     ]
 
-class LayerState(ComplexStructure):
+class NetConfig(ComplexStructure):
+    _fields_ = [
+        ("Dt", ct.c_double),
+        ("LearningRate", ct.c_double),
+        ("FeedbackDelay", ct.c_uint),
+        ("DeStat", MatrixFlat)
+    ]
+
+class LayerConfig(ComplexStructure):
     _fields_ = [
         ("TauSoma", ct.c_double),
+        ("TauSyn", ct.c_double),
         ("TauMean", ct.c_double),
         ("ApicalGain", ct.c_double),
+        ("FbFactor", ct.c_double),
         ("Act", ct.c_int),
-        ("F", MatrixFlat),
+        ("W", MatrixFlat),
+        ("B", MatrixFlat),
+        ("dW", MatrixFlat),
+        ("dB", MatrixFlat),
         ("UStat", MatrixFlat),
         ("AStat", MatrixFlat),
     ]
@@ -146,8 +154,8 @@ class LayerState(ComplexStructure):
 _shllib.run_model.restype = ct.c_int
 _shllib.run_model.argtypes = [
     ct.c_uint,
-    ct.POINTER(LayerState),
-    Config,
+    ct.POINTER(LayerConfig),
+    NetConfig,
     Data,
     Data
 ]
@@ -156,17 +164,12 @@ RELU, SIGMOID = 0, 1
 
 def run_model(epochs, layers, config, train_input, train_output, test_input, test_output):
     assert len(layers) == layers_num, "Expecting {} number of layers".format(layers_num)
-    layers_s = (LayerState * len(layers))()
+    layers_s = (LayerConfig * len(layers))()
     for li, l in enumerate(layers):
         layers_s[li] = l
 
-    testInp = Data() 
-    testInp.X = MatrixFlat.from_np(test_input)
-    testInp.Y = MatrixFlat.from_np(test_output)
-
-    trainInp = Data() 
-    trainInp.X = MatrixFlat.from_np(train_input)
-    trainInp.Y = MatrixFlat.from_np(train_output)
+    trainInp = Data(X=train_input, Y=train_output) 
+    testInp = Data(X=test_input, Y=test_output) 
 
     retcode = _shllib.run_model(
         epochs,
@@ -176,5 +179,5 @@ def run_model(epochs, layers, config, train_input, train_output, test_input, tes
         testInp
     )
     if retcode != 0:
-        raise Exception("Bad return code")
+        raise Exception("Error, see message above")
     

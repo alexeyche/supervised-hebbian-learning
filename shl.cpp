@@ -1,23 +1,13 @@
 #include <stdio.h>
 
-#ifdef SHL_DLL
-	#ifdef SHL_EXPORTS
-		#define SHL_API __declspec(dllexport)
-	#else
-		#define SHL_API __declspec(dllimport)
-	#endif
-#else		
-	#define SHL_API extern 
-#endif /* SHL_DLL */
-
+#define SHL_API extern
 
 struct TMatrixFlat;
-struct TConfig;
-struct TLayerState;
+struct TNetConfig;
+struct TLayerConfig;
 struct TData;
 
 using ui32 = unsigned int;
-
 
 struct TStructure {
 	int InputSize;
@@ -33,8 +23,8 @@ extern "C" {
 	
 	SHL_API int run_model(
 		ui32 epochs,
-		TLayerState* layerStates,
-		TConfig c,
+		TLayerConfig* layerStates,
+		TNetConfig c,
 		TData trainData,
 		TData testData
 	);
@@ -69,11 +59,6 @@ using TMatrixCM = Eigen::Matrix<float, nrows, ncols, Eigen::ColMajor>;
 
 using TMatrixD = TMatrix<Eigen::Dynamic, Eigen::Dynamic>;
 
-template<typename T>
-std::function<T> make_function(T *t) {
-  return { t };
-}
-
 
 struct TMatrixFlat {
   	float* Data;
@@ -88,7 +73,7 @@ struct TMatrixFlat {
   	}
 
   	static TMatrixD ToEigenDynamic(TMatrixFlat flat, ui32 offset=0) {
-  		return Eigen::Map<TMatrixD>(flat.Data, flat.NRows, flat.NCols);
+  		return Eigen::Map<TMatrixD>(flat.Data + offset, flat.NRows, flat.NCols);
   	}
 
   	template <int NRows, int NCols>
@@ -119,10 +104,10 @@ TMatrix<NRows, NCols> Relu(TMatrix<NRows, NCols> x) {
 }
 
 template <int NRows, int NCols>
-TMatrix<NRows, NCols> ReluDeriv(TMatrix<NRows, NCols> x, double threshold) {
+TMatrix<NRows, NCols> ReluDeriv(TMatrix<NRows, NCols> x) {
 	return x.unaryExpr(
-		[threshold](const float xv) { 
-			return xv > static_cast<float>(threshold) ? 1.0f : 0.0f;
+		[](const float xv) { 
+			return xv > static_cast<float>(0.0) ? 1.0f : 0.0f;
 		}
 	);
 }
@@ -133,10 +118,12 @@ TMatrix<NRows, NCols> Sigmoid(TMatrix<NRows, NCols> x) {
 }
 
 
-struct TConfig {
+struct TNetConfig {
 	double Dt;
  	double LearningRate;
  	ui32 FeedbackDelay;
+
+ 	TMatrixFlat DeStat;
 };
 
 
@@ -148,45 +135,69 @@ static constexpr int LayersNum = 2;
 static constexpr int SeqLength = 50;
 
 struct TData {
+	static constexpr ui32 TimeOfDataSpike = 10;
+
 	TMatrixFlat X;
 	TMatrixFlat Y;
 
-	TMatrixD ReadInputBatch(ui32 bi) {
-		return TMatrixFlat::ToEigenDynamic(X, bi);
+	TMatrix<BatchSize, InputSize> ReadInput(ui32 bi, ui32 ti) {
+		if (TimeOfDataSpike == ti) {
+			return Eigen::Map<TMatrix<BatchSize, InputSize>>(
+  				X.Data + bi*BatchSize*InputSize, BatchSize, InputSize
+  			);
+		}
+		return TMatrix<BatchSize, InputSize>::Zero();
 	}
-	TMatrixD ReadOutputBatch(ui32 bi) {
-		return TMatrixFlat::ToEigenDynamic(Y, bi);
+
+	TMatrix<BatchSize, OutputSize> ReadOutput(ui32 bi, ui32 ti) {
+		if (TimeOfDataSpike == ti) {
+			return Eigen::Map<TMatrix<BatchSize, OutputSize>>(
+  				Y.Data + bi*BatchSize*OutputSize, BatchSize, OutputSize
+  			);
+		}
+		return TMatrix<BatchSize, OutputSize>::Constant(0.5f);
 	}
 };
 
-struct TLayerState {
+struct TLayerConfig {
 	double TauSoma;
+	double TauSyn;
  	double TauMean;
  	double ApicalGain;
+ 	double FbFactor;
  	EActivation Act;
 
-	TMatrixFlat F;
-	TMatrixFlat UStat;
-	TMatrixFlat AStat;
+	TMatrixFlat W;
+	TMatrixFlat B;
+	TMatrixFlat dW;
+	TMatrixFlat dB;
+	TMatrixFlat UStat; 
+	TMatrixFlat AStat; 
 };
 
 
 template <int InputSize, int LayerSize>
-class TLayer {
-public:
-	TLayer(TLayerState s0, TConfig c0): c(c0), s(s0) {
-		UStat = TMatrixFlat::ToEigenDynamic(s.UStat);
-		AStat = TMatrixFlat::ToEigenDynamic(s.AStat);
-		F = TMatrixFlat::ToEigen<InputSize, LayerSize>(s.F);
+struct TLayer {
+	TLayer(TLayerConfig s0, TNetConfig c0): c(c0), s(s0) {
+		W = TMatrixFlat::ToEigen<InputSize, LayerSize>(s.W);
+		B = TMatrixFlat::ToEigen<1, LayerSize>(s.B);
 
+		UStat = TMatrixD::Zero(BatchSize, LayerSize*SeqLength);
+		AStat = TMatrixD::Zero(BatchSize, LayerSize*SeqLength);
+		
+		dW = TMatrix<InputSize, LayerSize>::Zero(); 
+		dB = TMatrix<1, LayerSize>::Zero(); 
+		
+		Syn = TMatrix<BatchSize, InputSize>::Zero();
 		U = TMatrix<BatchSize, LayerSize>::Zero();
 		A = TMatrix<BatchSize, LayerSize>::Zero();
 
 		if (s.Act == RELU) {
-			Act = make_function(&Relu<BatchSize, LayerSize>);
+			Act = &Relu<BatchSize, LayerSize>;
+			ActDeriv = &ReluDeriv<BatchSize, LayerSize>;
 		} else
 		if (s.Act == SIGMOID) {
-			Act = make_function(&Sigmoid<BatchSize, LayerSize>);
+			Act = &Sigmoid<BatchSize, LayerSize>;
 		} else {
 			ENSURE(0, "Failed to find activation function #" << s.Act);
 		}
@@ -195,87 +206,116 @@ public:
 	~TLayer() {
 		TMatrixFlat::FromEigenDynamic(UStat, &s.UStat);
 		TMatrixFlat::FromEigenDynamic(AStat, &s.AStat);
+		TMatrixFlat::FromEigen<InputSize, LayerSize>(dW, &s.dW);
+		TMatrixFlat::FromEigen<1, LayerSize>(dB, &s.dB);
 	}
 
 	auto& Run(ui32 t, TMatrix<BatchSize, InputSize> ff, TMatrix<BatchSize, LayerSize> fb) {
+		Syn += c.Dt * (ff - Syn) / s.TauSyn;
 		
-		TMatrix<BatchSize, LayerSize> dU = ff * F + fb - U;
+		TMatrix<BatchSize, LayerSize> dU = Syn * W + s.FbFactor * fb - U;
 
 		U += c.Dt * dU / s.TauSoma;
-		A = Act(U);
+		A = Act(U.rowwise() + B);
 
 		UStat.block(0, t*LayerSize, BatchSize, LayerSize) = U;
 		AStat.block(0, t*LayerSize, BatchSize, LayerSize) = A;
 
+		dW += Syn.transpose() * fb;
+		dB += fb.colwise().mean();
+
 		return A;
 	}
 
-	TConfig c;
-	TLayerState s;
+	TNetConfig c;
+	TLayerConfig s;
 
-	TMatrix<InputSize, LayerSize> F;
+	std::function<TMatrix<BatchSize, LayerSize>(TMatrix<BatchSize, LayerSize>)> Act;
+	std::function<TMatrix<BatchSize, LayerSize>(TMatrix<BatchSize, LayerSize>)> ActDeriv;
 
+	TMatrix<InputSize, LayerSize> W;
+	TMatrix<1, LayerSize> B;
+
+	TMatrix<BatchSize, InputSize> Syn;
 	TMatrix<BatchSize, LayerSize> U;
 	TMatrix<BatchSize, LayerSize> A;
 	
 	TMatrixD UStat;
 	TMatrixD AStat;
-	std::function<TMatrix<BatchSize, LayerSize>(TMatrix<BatchSize, LayerSize>)> Act;
+	TMatrix<InputSize, LayerSize> dW;
+	TMatrix<1, LayerSize> dB;
+};
+
+struct TNet {
+	TNet(TLayerConfig l0, TLayerConfig l1, TNetConfig c0)
+		: L0(l0, c0)
+		, L1(l1, c0)
+		, c(c0)
+	{
+		ENSURE(c.FeedbackDelay > 0, "FeedbackDelay should be greater than zero");
+	}
+
+	void RunOverBatch(TData data, ui32 batchIdx) {
+		TMatrixD deSeq = TMatrixD::Zero(BatchSize, OutputSize*SeqLength);
+		TMatrix<BatchSize, OutputSize> zeros = TMatrix<BatchSize, OutputSize>::Zero();
+		TMatrix<BatchSize, LayerSize> lzeros = TMatrix<BatchSize, LayerSize>::Zero();
+
+		for (ui32 t=0; t < SeqLength; ++t) {	
+			TMatrix<BatchSize, InputSize> x = data.ReadInput(batchIdx, t);
+			TMatrix<BatchSize, OutputSize> y = data.ReadOutput(batchIdx, t);
+			TMatrix<BatchSize, OutputSize> deFeedback = \
+				deSeq.block<BatchSize, OutputSize>(0, t*OutputSize);
+
+			TMatrix<BatchSize, LayerSize> dUdE = \
+				L0.ActDeriv(L0.U).array() * (deFeedback * L1.W.transpose()).array();
+			auto& a0 = L0.Run(t, x, dUdE);
+			auto& a1 = L1.Run(t, a0, deFeedback);
+
+			TMatrix<BatchSize, OutputSize> de = y - a1;
+
+			if (t < SeqLength-c.FeedbackDelay) {
+				deSeq.block<BatchSize, OutputSize>(0, (t+c.FeedbackDelay)*OutputSize) = de;
+			}
+		}
+
+		TMatrixFlat::FromEigenDynamic(deSeq, &c.DeStat);
+	}
+
+	TNetConfig c;
+
+	TLayer<InputSize, LayerSize> L0;
+	TLayer<LayerSize, OutputSize> L1;
 };
 
 
-using TNet = std::tuple<
-	TLayer<InputSize, LayerSize>,
-	TLayer<LayerSize, OutputSize>
->;
-
-
-void run_over_batch(TNet& net, TMatrixD inputData, TMatrixD outputData) {
-	TMatrixD deSeq = TMatrixD::Zero(BatchSize, OutputSize*SeqLength);
-	TMatrix<BatchSize, OutputSize> zeros;
-
-	for (ui32 t=0; t < SeqLength; ++t) {
-		TMatrix<BatchSize, InputSize> x = \
-			inputData.block<BatchSize, InputSize>(0, t*InputSize);
-		TMatrix<BatchSize, OutputSize> y = \
-			outputData.block<BatchSize, OutputSize>(0, t*OutputSize);
-		TMatrix<BatchSize, OutputSize> de = \
-			deSeq.block<BatchSize, OutputSize>(0, t*OutputSize);
-
-		auto& a0 = std::get<0>(net).Run(t, x, de * std::get<1>(net).F.transpose());
-		auto& a1 = std::get<1>(net).Run(t, a0, zeros);
-	}
-}
-
 int run_model(
 	ui32 epochs,
-	TLayerState* layerStates,
-	TConfig c,
+	TLayerConfig* layerStates,
+	TNetConfig c,
 	TData trainData,
 	TData testData
 ) {
+	try {
+		ENSURE(trainData.X.NRows == BatchSize, "Row size of train input data should be " << BatchSize);
+		ENSURE(trainData.X.NCols == InputSize, "Col size of train input data should be " << InputSize);
+		ENSURE(trainData.Y.NCols == OutputSize, "Col size of train output data should be " << OutputSize);
+		ENSURE(testData.X.NRows == BatchSize, "Row size of test input data should be " << BatchSize);
+		ENSURE(testData.X.NCols == InputSize, "Col size of test input data should be " << InputSize);
+		ENSURE(testData.Y.NCols == OutputSize, "Col size of test output data should be " << OutputSize);
 
-	TNet net = std::make_tuple(
-		std::tuple_element<0, TNet>::type(layerStates[0], c),
-		std::tuple_element<1, TNet>::type(layerStates[1], c)
-	);
+		TNet net(layerStates[0], layerStates[1], c);
 
-	// TLayer<TrainBatchSize, InputSize, OutputSize> l0(layerStates[0], c);
-	// TLayer<TrainBatchSize, OutputSize, 0> l1(layerStates[1], c);
-
-	for (ui32 e=0; e<epochs; ++e) {
-		try {
+		for (ui32 e=0; e<epochs; ++e) {
 			ui32 bi = 0;
-			run_over_batch(
-				net, 
-				trainData.ReadInputBatch(bi), 
-				trainData.ReadOutputBatch(bi)
-			);
+			net.RunOverBatch(trainData, bi);
+		}
 
-		} catch (const std::exception& e) {
-			std::cerr << e.what() << "\n";
-			return 1;
-		}		
+	} catch (const std::exception& e) {
+		std::cerr << "====================================\n";
+		std::cerr << "ERROR:\n";
+		std::cerr << "\t" << e.what() << "\n";
+		std::cerr << "====================================\n";
+		return 1;
 	}
 	return 0;
 }

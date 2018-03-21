@@ -67,6 +67,9 @@ class AdagradOpt(Optimization):
 
 
 class AdadeltaOpt(Optimization):
+	"""
+	TODO: it's not Adadelta actually
+	"""
 	def __init__(self, learning_rates, gamma, eps=1e-05):
 		self.learning_rates = learning_rates
 		self.eps = eps
