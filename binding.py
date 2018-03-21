@@ -9,7 +9,8 @@ c_float_p = ct.POINTER(ct.c_float)
 # lib_dir = os.path.dirname(os.path.realpath(__file__))
 
 
-lib_dir = "/home/alexeyche/prog/supervised-hebbian-learning"
+lib_dir = "/Users/aleksei/distr/supervised-hebbian-learning"
+# lib_dir = "/home/alexeyche/prog/supervised-hebbian-learning"
 _shllib = np.ctypeslib.load_library('libshl', lib_dir)
 
 
@@ -30,61 +31,17 @@ def get_structure_info():
 _shllib.get_structure_info.restype = Structure
 
 
-class StructureWithSizeDescr(ct.Structure):
-
-    class Np(object):
-        pass
-
-    @classmethod
-    def alloc(cls):
-        assert hasattr(cls, "_size_"), "Need to define size"
-        assert hasattr(cls, "_fields_"), "Need to define fields"
-
-        o = cls.Np()
-        for fname, _ in cls._fields_:
-            s = cls._size_[fname]
-            if len(s) == 2:
-                setattr(o, fname, np.zeros((s[0], s[1]), dtype=np.float32))
-            elif len(s) == 3:
-                setattr(o, fname, np.zeros((s[0], s[1]*s[2]), dtype=np.float32))
-            else:
-                raise Exception("Other shapes are not supported")
-
-        return o
-
-    @classmethod
-    def reshape(cls, o_np):
-        assert hasattr(cls, "_size_"), "Need to define size"
-        assert hasattr(cls, "_fields_"), "Need to define fields"
-
-        for fname, _ in cls._fields_:
-            m_raw = getattr(o_np, fname)
-            orig_size = cls._size_[fname]
-            if len(orig_size) == 3:
-                setattr(
-                    o_np, 
-                    fname, 
-                    m_raw.reshape((
-                        orig_size[0],
-                        orig_size[1],
-                        orig_size[2],
-                    ))
-                )
-            elif len(orig_size) == 2:
-                pass
-            else:
-                raise Exception("Other shapes are not supported")
-        return o_np
-
-    @classmethod
-    def from_np(cls, s):
-        assert hasattr(cls, "_size_"), "Need to define size"
-        assert hasattr(cls, "_fields_"), "Need to define fields"
-
-        r = cls()
-        for fname, _ in cls._fields_:
-            setattr(r, fname, MatrixFlat.from_np(getattr(s, fname)))
-        return r
+def reshape_from_flat(m_raw, orig_size):
+    if len(orig_size) == 3:
+        return m_raw.reshape((
+            orig_size[0],
+            orig_size[1],
+            orig_size[2],
+        ))
+    elif len(orig_size) == 2:
+        return m_raw
+    else:
+        raise Exception("Other shapes are not supported")
 
 
 
@@ -109,131 +66,115 @@ class MatrixFlat(ct.Structure):
 
 
 
-class Config(ct.Structure):
+
+struc_info = get_structure_info()
+
+input_size = struc_info.InputSize
+layer_size = struc_info.LayerSize
+output_size = struc_info.OutputSize
+batch_size = struc_info.BatchSize
+layers_num = struc_info.LayersNum
+seq_length = struc_info.SeqLength
+
+class ComplexStructure(ct.Structure):
+    def __init__(self, **kwargs):
+        self._fields_dict = dict(self._fields_)
+        self._np_values_dict = {}
+
+        for k, v in kwargs.iteritems():
+            assert k in self._fields_dict, "Failed to find {} in fields of {}".format(k, self)
+            if self._fields_dict[k] == MatrixFlat:
+                assert isinstance(v, np.ndarray), \
+                    "Expecting numpy matrix as input for field {}".format(k)
+
+                s = v.shape
+                if len(s) == 2:
+                    self._np_values_dict[k] = (
+                        v
+                            .copy()
+                            .astype(np.float32),
+                        v.shape
+                    )
+                elif len(s) == 3:
+                    self._np_values_dict[k] = (
+                        v
+                            .copy()
+                            .reshape(s[0], s[1]*s[2])
+                            .astype(np.float32),
+                        v.shape
+                    )
+                else:
+                    raise Exception("Other shapes are not supported")
+
+                setattr(self, k, MatrixFlat.from_np(self._np_values_dict[k][0]))
+            else:
+                setattr(self, k, v)
+
+
+
+    def get_matrix(self, name):
+        assert name in self._np_values_dict
+        m_raw, orig_shape = self._np_values_dict[name]
+        return reshape_from_flat(m_raw, orig_shape)
+
+class Config(ComplexStructure):
     _fields_ = [
-        ("F0", MatrixFlat),
-        ("R0", MatrixFlat),
-        ("F1", MatrixFlat),
         ("Dt", ct.c_double),
-        ("TauSyn", ct.c_double),
-        ("TauMean", ct.c_double),
-        ("TauMeanLong", ct.c_double),
-        ("Threshold", ct.c_double),
-        ("FbFactor", ct.c_double),
         ("LearningRate", ct.c_double),
-        ("Lambda", ct.c_double),
-        ("ApicalGain", ct.c_double),
         ("FeedbackDelay", ct.c_uint)
     ]
 
-
 class Data(ct.Structure):
     _fields_ = [
-        ("I", MatrixFlat),
-        ("Output", MatrixFlat),
+        ("X", MatrixFlat),
+        ("Y", MatrixFlat),
     ]
 
-class State(StructureWithSizeDescr):
+class LayerState(ComplexStructure):
     _fields_ = [
-        ("A0m", MatrixFlat),
-        ("A0mm", MatrixFlat),
-        ("Im", MatrixFlat),
-        ("dF0", MatrixFlat),
-        ("dF1", MatrixFlat),
+        ("TauSoma", ct.c_double),
+        ("TauMean", ct.c_double),
+        ("ApicalGain", ct.c_double),
+        ("Act", ct.c_int),
+        ("F", MatrixFlat),
+        ("UStat", MatrixFlat),
+        ("AStat", MatrixFlat),
     ]
 
-    _struc_info_ = get_structure_info()
-    _size_ = {
-        "A0m": (_struc_info_.BatchSize, _struc_info_.LayerSize),
-        "A0mm": (_struc_info_.BatchSize, _struc_info_.LayerSize),
-        "Im": (_struc_info_.BatchSize, _struc_info_.InputSize),
-        "dF0": (_struc_info_.InputSize, _struc_info_.LayerSize),
-        "dF1": (_struc_info_.LayerSize, _struc_info_.OutputSize),
-    }
-
-
-class Statistics(StructureWithSizeDescr):
-    _fields_ = [
-        ("I", MatrixFlat),
-        ("Im", MatrixFlat),
-        ("U", MatrixFlat),
-        ("A", MatrixFlat),
-        ("dA", MatrixFlat),
-        ("Output", MatrixFlat),
-        ("De", MatrixFlat),
-        ("ApicalFeedback", MatrixFlat),
-        ("dF0", MatrixFlat),
-        ("Am", MatrixFlat),
-        ("Amm", MatrixFlat),
-    ]
-
-    _struc_info_ = get_structure_info()
-    _size_ = {
-        "I": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.InputSize),
-        "Im": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.InputSize),
-        "U": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.LayerSize),
-        "A": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.LayerSize),
-        "dA": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.LayerSize),
-        "Output": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.OutputSize),
-        "De": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.OutputSize),
-        "ApicalFeedback": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.OutputSize),
-        "dF0": (_struc_info_.SeqLength, _struc_info_.InputSize, _struc_info_.LayerSize),
-        "Am": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.LayerSize),
-        "Amm": (_struc_info_.BatchSize, _struc_info_.SeqLength, _struc_info_.LayerSize),
-    }
 
 
 _shllib.run_model.restype = ct.c_int
 _shllib.run_model.argtypes = [
     ct.c_uint,
+    ct.POINTER(LayerState),
     Config,
-    State,
-    State,
     Data,
-    Data,
-    Statistics,
-    Statistics
+    Data
 ]
 
+RELU, SIGMOID = 0, 1
 
-
-def run_model(epochs, config, train_state, test_state, train_input, train_output, test_input, test_output):
-    struc_info = get_structure_info()
-
-    input_size = struc_info.InputSize
-    layer_size = struc_info.LayerSize
-    output_size = struc_info.OutputSize
-    batch_size = struc_info.BatchSize
-    layers_num = struc_info.LayersNum
-    seq_length = struc_info.SeqLength
-
-    trainStatistics = Statistics.alloc()
-    trainStatisticsFlat = Statistics.from_np(trainStatistics)
-
-    testStatistics = Statistics.alloc()
-    testStatisticsFlat = Statistics.from_np(testStatistics)
-    
-    trainInp = Data() 
-    trainInp.I = MatrixFlat.from_np(train_input)
-    trainInp.Output = MatrixFlat.from_np(train_output)
+def run_model(epochs, layers, config, train_input, train_output, test_input, test_output):
+    assert len(layers) == layers_num, "Expecting {} number of layers".format(layers_num)
+    layers_s = (LayerState * len(layers))()
+    for li, l in enumerate(layers):
+        layers_s[li] = l
 
     testInp = Data() 
-    testInp.I = MatrixFlat.from_np(test_input)
-    testInp.Output = MatrixFlat.from_np(test_output)
+    testInp.X = MatrixFlat.from_np(test_input)
+    testInp.Y = MatrixFlat.from_np(test_output)
 
-    trainStateFlat = State.from_np(train_state)
-    testStateFlat = State.from_np(test_state)
-    
+    trainInp = Data() 
+    trainInp.X = MatrixFlat.from_np(train_input)
+    trainInp.Y = MatrixFlat.from_np(train_output)
+
     retcode = _shllib.run_model(
         epochs,
+        layers_s,
         config,
-        trainStateFlat,
-        testStateFlat,
         trainInp,
-        testInp,
-        trainStatisticsFlat,
-        testStatisticsFlat
+        testInp
     )
     if retcode != 0:
         raise Exception("Bad return code")
-    return Statistics.reshape(trainStatistics), Statistics.reshape(testStatistics)
+    
