@@ -59,6 +59,14 @@ using TMatrixCM = Eigen::Matrix<float, nrows, ncols, Eigen::ColMajor>;
 
 using TMatrixD = TMatrix<Eigen::Dynamic, Eigen::Dynamic>;
 
+#define CheckSizeMatch(m, mf) \
+	ENSURE(m.rows() == mf.NRows,  \
+		"Rows are not aligned in the matrix for " << #m << ": " \
+			<< mf.NRows << " != " << m.rows() << " (latter is expected)");\
+	ENSURE(m.cols() == mf.NCols, \
+		"Cols are not aligned in the matrix for " << #m << ": " \
+			<< mf.NCols << " != " << m.cols() << " (latter is expected)");
+
 
 struct TMatrixFlat {
   	float* Data;
@@ -67,13 +75,16 @@ struct TMatrixFlat {
 
   	template <int NRows, int NCols>
   	static TMatrix<NRows, NCols> ToEigen(TMatrixFlat flat) {
+  		ENSURE(flat.NRows == NRows, "Rows do not match while reading flat matrix from the outside");
+  		ENSURE(flat.NCols == NCols, "Cols do not match while reading flat matrix from the outside");
+
   		return Eigen::Map<TMatrix<NRows, NCols>>(
   			flat.Data, flat.NRows, flat.NCols
   		);
   	}
 
-  	static TMatrixD ToEigenDynamic(TMatrixFlat flat, ui32 offset=0) {
-  		return Eigen::Map<TMatrixD>(flat.Data + offset, flat.NRows, flat.NCols);
+  	static TMatrixD ToEigenDynamic(TMatrixFlat flat) {
+  		return Eigen::Map<TMatrixD>(flat.Data, flat.NRows, flat.NCols);
   	}
 
   	template <int NRows, int NCols>
@@ -91,7 +102,6 @@ struct TMatrixFlat {
   		memcpy(dst->Data, m.data(), sizeof(float) * m.rows() * m.cols());
   	}
 };
-
 
 enum EActivation {
 	RELU = 0,
@@ -128,9 +138,9 @@ struct TNetConfig {
 
 
 static constexpr int InputSize = 2;
-static constexpr int LayerSize = 30;
+static constexpr int LayerSize = 3;
 static constexpr int OutputSize = 2;
-static constexpr int BatchSize = 4;
+static constexpr int BatchSize = 1;
 static constexpr int LayersNum = 2;
 static constexpr int SeqLength = 50;
 
@@ -155,7 +165,7 @@ struct TData {
   				Y.Data + bi*BatchSize*OutputSize, BatchSize, OutputSize
   			);
 		}
-		return TMatrix<BatchSize, OutputSize>::Constant(0.5f);
+		return TMatrix<BatchSize, OutputSize>::Zero();
 	}
 };
 
@@ -173,6 +183,7 @@ struct TLayerConfig {
 	TMatrixFlat dB;
 	TMatrixFlat UStat; 
 	TMatrixFlat AStat; 
+	TMatrixFlat FbStat;
 };
 
 
@@ -184,7 +195,12 @@ struct TLayer {
 
 		UStat = TMatrixD::Zero(BatchSize, LayerSize*SeqLength);
 		AStat = TMatrixD::Zero(BatchSize, LayerSize*SeqLength);
+		FbStat = TMatrixD::Zero(BatchSize, LayerSize*SeqLength);
 		
+		CheckSizeMatch(UStat, s.UStat);
+		CheckSizeMatch(AStat, s.AStat);
+		CheckSizeMatch(FbStat, s.FbStat);
+
 		dW = TMatrix<InputSize, LayerSize>::Zero(); 
 		dB = TMatrix<1, LayerSize>::Zero(); 
 		
@@ -206,6 +222,7 @@ struct TLayer {
 	~TLayer() {
 		TMatrixFlat::FromEigenDynamic(UStat, &s.UStat);
 		TMatrixFlat::FromEigenDynamic(AStat, &s.AStat);
+		TMatrixFlat::FromEigenDynamic(FbStat, &s.FbStat);
 		TMatrixFlat::FromEigen<InputSize, LayerSize>(dW, &s.dW);
 		TMatrixFlat::FromEigen<1, LayerSize>(dB, &s.dB);
 	}
@@ -216,13 +233,16 @@ struct TLayer {
 		TMatrix<BatchSize, LayerSize> dU = Syn * W + s.FbFactor * fb - U;
 
 		U += c.Dt * dU / s.TauSoma;
-		A = Act(U.rowwise() + B);
+		A = Act(U);
 
 		UStat.block(0, t*LayerSize, BatchSize, LayerSize) = U;
 		AStat.block(0, t*LayerSize, BatchSize, LayerSize) = A;
-
-		dW += Syn.transpose() * fb;
-		dB += fb.colwise().mean();
+		FbStat.block(0, t*LayerSize, BatchSize, LayerSize) = fb;
+		
+		if (TData::TimeOfDataSpike+c.FeedbackDelay == t) {
+			dW += Syn.transpose() * fb;
+			dB += fb.colwise().mean();
+		}
 
 		return A;
 	}
@@ -242,6 +262,7 @@ struct TLayer {
 	
 	TMatrixD UStat;
 	TMatrixD AStat;
+	TMatrixD FbStat;
 	TMatrix<InputSize, LayerSize> dW;
 	TMatrix<1, LayerSize> dB;
 };

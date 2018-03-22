@@ -147,6 +147,7 @@ class LayerConfig(ComplexStructure):
         ("dB", MatrixFlat),
         ("UStat", MatrixFlat),
         ("AStat", MatrixFlat),
+        ("FbStat", MatrixFlat),
     ]
 
 
