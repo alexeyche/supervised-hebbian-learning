@@ -130,7 +130,9 @@ class NetConfig(ComplexStructure):
         ("Dt", ct.c_double),
         ("LearningRate", ct.c_double),
         ("FeedbackDelay", ct.c_uint),
-        ("DeStat", MatrixFlat)
+        ("OutputTau", ct.c_double),
+        ("DeStat", MatrixFlat),
+        ("YMeanStat", MatrixFlat),
     ]
 
 class LayerConfig(ComplexStructure):
