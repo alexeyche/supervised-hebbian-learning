@@ -32,7 +32,9 @@ extern "C" {
 	SHL_API TStructure get_structure_info();
 }
 
-
+////////////////////////////////////
+// Basics
+////////////////////////////////////
 
 // #define EIGEN_USE_BLAS = 1
 
@@ -104,9 +106,14 @@ struct TMatrixFlat {
   	}
 };
 
+
+////////////////////////////////////
+// Activation function
+////////////////////////////////////
+
 enum EActivation {
-	RELU = 0,
-	SIGMOID = 1
+	EA_RELU = 0,
+	EA_SIGMOID = 1
 };
 
 template <int NRows, int NCols>
@@ -127,6 +134,10 @@ template <int NRows, int NCols>
 TMatrix<NRows, NCols> Sigmoid(TMatrix<NRows, NCols> x) {
 	return 1.0/(1.0 + (-x.array()).exp());
 }
+
+////////////////////////////////////
+// Learning rules
+////////////////////////////////////
 
 template <int Input, int Output>
 struct TSGDLearningRule {
@@ -166,7 +177,49 @@ auto MakeLearningRule(TMatrix<Input, Output>* param) {
 }
 
 
+////////////////////////////////////
+// Gradient processing
+////////////////////////////////////
 
+enum EGradientProcessing {
+	EGP_NO_GRADIENT_PROCESSING = 0,
+	EGP_LOCAL_LTD = 1,
+	EGP_NONLINEAR = 2,
+	EGP_HEBB = 3
+};
+
+template <int NRows, int NCols>
+void NoGradientProcessing(TMatrix<NRows, NCols> a, TMatrix<NRows, NCols>* de) {}
+
+template <int NRows, int NCols>
+void LocalLtdGradientProcessing(TMatrix<NRows, NCols> a, TMatrix<NRows, NCols>* de) {
+	for (ui32 i=0; i<NRows; ++i) {
+		for (ui32 j=0; j<NCols; ++j) {
+			if ((*de)(i, j) < 0.0) {
+				(*de)(i, j) = - a(i, j);
+			}
+		}
+	}
+}
+
+template <int NRows, int NCols>
+void NonLinearGradientProcessing(TMatrix<NRows, NCols> a, TMatrix<NRows, NCols>* de) {
+	for (ui32 i=0; i<NRows; ++i) {
+		for (ui32 j=0; j<NCols; ++j) {
+			float& value = (*de)(i, j);
+			
+			if (value < 0.0) {
+				value = 0.0;  // Rectification
+			}
+			value = 1.0/(1.0 + exp(-100.0*value)) - 0.5;  // Non-linear step			
+			value -= a(i, j);  // Local ltd
+		}
+	}
+}
+
+////////////////////////////////////
+// Configuration
+////////////////////////////////////
 
 struct TNetConfig {
 	double Dt;
@@ -179,7 +232,7 @@ struct TNetConfig {
 };
 
 template <int Input, int Output>
-using DefaultLearningRule = TAdadeltaLearningRule<Input, Output>;
+using DefaultLearningRule = TSGDLearningRule<Input, Output>;
 
 static constexpr int InputSize = 4;
 static constexpr int LayerSize = 30;
@@ -187,6 +240,15 @@ static constexpr int OutputSize = 2;
 static constexpr int BatchSize = 40;
 static constexpr int LayersNum = 2;
 static constexpr int SeqLength = 50;
+
+// MNIST conf
+// static constexpr int InputSize = 784;
+// static constexpr int LayerSize = 200;
+// static constexpr int OutputSize = 10;
+// static constexpr int BatchSize = 200;
+// static constexpr int LayersNum = 2;
+// static constexpr int SeqLength = 50;
+
 
 struct TData {
 	static constexpr ui32 TimeOfDataSpike = 10;
@@ -221,6 +283,7 @@ struct TLayerConfig {
  	double ApicalGain;
  	double FbFactor;
  	EActivation Act;
+ 	EGradientProcessing GradProc;
 
 	TMatrixFlat W;
 	TMatrixFlat B;
@@ -254,15 +317,27 @@ struct TLayer {
 		dW = TMatrix<InputSize, LayerSize>::Zero(); 
 		dB = TMatrix<1, LayerSize>::Zero(); 
 		
-		if (s.Act == RELU) {
+		if (s.Act == EA_RELU) {
 			Act = &Relu<BatchSize, LayerSize>;
 			ActDeriv = &ReluDeriv<BatchSize, LayerSize>;
 		} else
-		if (s.Act == SIGMOID) {
+		if (s.Act == EA_SIGMOID) {
 			Act = &Sigmoid<BatchSize, LayerSize>;
 		} else {
 			ENSURE(0, "Failed to find activation function #" << s.Act);
 		}
+
+		if (s.GradProc == EGP_NO_GRADIENT_PROCESSING) {
+			GradProc = &NoGradientProcessing<BatchSize, LayerSize>;
+		} 
+		else if (s.GradProc == EGP_LOCAL_LTD) {
+			GradProc = &LocalLtdGradientProcessing<BatchSize, LayerSize>;
+		}
+		else if (s.GradProc == EGP_NONLINEAR) {
+			GradProc = &NonLinearGradientProcessing<BatchSize, LayerSize>;
+		} else {
+			ENSURE(0, "Failed to find gradient processing function #" << s.GradProc);
+		}		
 	}
 
 	~TLayer() {
@@ -285,6 +360,8 @@ struct TLayer {
 	auto& Run(ui32 t, TMatrix<BatchSize, InputSize> ff, TMatrix<BatchSize, LayerSize> fb) {
 		Syn += c.Dt * (ff - Syn) / s.TauSyn;
 		
+		GradProc(A, &fb);
+		
 		TMatrix<BatchSize, LayerSize> dU = Syn * W + s.FbFactor * fb - U;			
 
 		U += c.Dt * dU / s.TauSoma;
@@ -305,7 +382,6 @@ struct TLayer {
 	void ApplyGradients() {
 		WLearning.Update(&dW, c.LearningRate);
 		BLearning.Update(&dB, c.LearningRate);
-
 	}
 
 	TNetConfig c;
@@ -314,6 +390,8 @@ struct TLayer {
 	std::function<TMatrix<BatchSize, LayerSize>(TMatrix<BatchSize, LayerSize>)> Act;
 	std::function<TMatrix<BatchSize, LayerSize>(TMatrix<BatchSize, LayerSize>)> ActDeriv;
 	
+	std::function<void(TMatrix<BatchSize, LayerSize>, TMatrix<BatchSize, LayerSize>*)> GradProc;
+
 	TMatrix<BatchSize, InputSize> Syn;
 	TMatrix<BatchSize, LayerSize> U;
 	TMatrix<BatchSize, LayerSize> A;

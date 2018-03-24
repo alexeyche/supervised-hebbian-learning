@@ -16,10 +16,11 @@ def xavier_init(fan_in, fan_out, const=1.0):
 
 
 ds = ToyDataset()
-x, y = ds._x_v, ds._y_v
+
+x, y = ds.train_data
 # y = np.concatenate((y, y), axis=1) # use it for 1 layer output
 
-xt, yt = ds._xt_v, ds._yt_v
+xt, yt = ds.test_data
 # yt = np.concatenate((yt, yt), axis=1) # use it for 1 layer output
 
 
@@ -40,6 +41,7 @@ net = (
         ApicalGain = 1.0,
         FbFactor = 0.0,
         Act = RELU,
+        GradProc = NONLINEAR,
         W = xavier_init(input_size, layer_size),
         B = np.zeros((1, layer_size)),
         dW = np.zeros((input_size, layer_size)),
@@ -55,6 +57,7 @@ net = (
         ApicalGain = 1.0,
         FbFactor = 0.0,
         Act = RELU,
+        GradProc = NO_GRADIENT_PROCESSING,
         W = xavier_init(layer_size, output_size),
         B = np.zeros((1, output_size)),
         dW = np.zeros((layer_size, output_size)),
@@ -75,12 +78,13 @@ run_model(
     y,
     xt,
     yt,
-    debug_print_freq = 20
+    debug_print_freq = 1
 )
 
 fbStat0 = l0.get("FbStat")
 fbStat1 = l1.get("FbStat")
 
+AStat0 = l0.get("AStat")
 AStat1 = l1.get("AStat")
 print np.mean(np.not_equal(np.argmax(AStat1[:,10,:], axis=1), np.argmax(yt,axis=1)))
 

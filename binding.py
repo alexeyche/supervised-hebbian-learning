@@ -143,6 +143,7 @@ class LayerConfig(ComplexStructure):
         ("ApicalGain", ct.c_double),
         ("FbFactor", ct.c_double),
         ("Act", ct.c_int),
+        ("GradProc", ct.c_int),
         ("W", MatrixFlat),
         ("B", MatrixFlat),
         ("dW", MatrixFlat),
@@ -165,6 +166,7 @@ _shllib.run_model.argtypes = [
 ]
 
 RELU, SIGMOID = 0, 1
+NO_GRADIENT_PROCESSING, LOCAL_LTD, NONLINEAR, HEBB = 0, 1, 2, 4
 
 def run_model(epochs, layers, config, train_input, train_output, test_input, test_output, debug_print_freq=1):
     assert len(layers) == layers_num, "Expecting {} number of layers".format(layers_num)

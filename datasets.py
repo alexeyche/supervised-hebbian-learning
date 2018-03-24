@@ -123,6 +123,14 @@ class Dataset(object):
     def task_type(self):
         raise NotImplementedError
 
+    @property
+    def train_data(self):
+        raise NotImplementedError
+    
+    @property
+    def test_data(self):
+        raise NotImplementedError
+
 class MNISTDataset(Dataset):
     def __init__(self):
         from tensorflow.examples.tutorials.mnist import input_data
@@ -183,6 +191,13 @@ class MNISTDataset(Dataset):
     def task_type(self):
         return TaskType.CLASSIFICATION
 
+    @property
+    def train_data(self):        
+        return self._data.train.images, self._data.train.labels
+    
+    @property
+    def test_data(self):        
+        return self._data.test.images, self._data.test.labels
 
 class ToyDataset(Dataset):
     def __init__(self):
@@ -222,6 +237,15 @@ class ToyDataset(Dataset):
     @property
     def task_type(self):
         return TaskType.CLASSIFICATION
+
+    @property
+    def train_data(self):        
+        return self._x_v, self._y_v
+    
+    @property
+    def test_data(self):        
+        return self._xt_v, self._yt_v
+
 
 class XorDataset(Dataset):
     def __init__(self):
