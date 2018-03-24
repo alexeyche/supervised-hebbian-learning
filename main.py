@@ -21,6 +21,10 @@ x, y = ds.train_data
 # y = np.concatenate((y, y), axis=1) # use it for 1 layer output
 
 xt, yt = ds.test_data
+
+# x, y = x[:1000], y[:1000]
+# xt, yt = xt[:1000], yt[:1000]
+
 # yt = np.concatenate((yt, yt), axis=1) # use it for 1 layer output
 
 
@@ -41,7 +45,7 @@ net = (
         ApicalGain = 1.0,
         FbFactor = 0.0,
         Act = RELU,
-        GradProc = NONLINEAR,
+        GradProc = HEBB,
         W = xavier_init(input_size, layer_size),
         B = np.zeros((1, layer_size)),
         dW = np.zeros((input_size, layer_size)),
@@ -78,7 +82,7 @@ run_model(
     y,
     xt,
     yt,
-    debug_print_freq = 1
+    test_freq = 20
 )
 
 fbStat0 = l0.get("FbStat")
