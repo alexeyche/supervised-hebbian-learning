@@ -160,12 +160,13 @@ _shllib.run_model.argtypes = [
     ct.POINTER(LayerConfig),
     NetConfig,
     Data,
-    Data
+    Data,
+    ct.c_uint
 ]
 
 RELU, SIGMOID = 0, 1
 
-def run_model(epochs, layers, config, train_input, train_output, test_input, test_output):
+def run_model(epochs, layers, config, train_input, train_output, test_input, test_output, debug_print_freq=1):
     assert len(layers) == layers_num, "Expecting {} number of layers".format(layers_num)
     layers_s = (LayerConfig * len(layers))()
     for li, l in enumerate(layers):
@@ -179,7 +180,8 @@ def run_model(epochs, layers, config, train_input, train_output, test_input, tes
         layers_s,
         config,
         trainInp,
-        testInp
+        testInp,
+        debug_print_freq
     )
     if retcode != 0:
         raise Exception("Error, see message above")

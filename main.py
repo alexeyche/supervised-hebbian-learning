@@ -25,7 +25,7 @@ xt, yt = ds._xt_v, ds._yt_v
 
 c = NetConfig(
     Dt = 1.0,
-    LearningRate=0.01,
+    LearningRate=0.001,
     FeedbackDelay=1,
     OutputTau=5.0,
     DeStat = np.zeros((batch_size, seq_length, output_size)),
@@ -74,7 +74,8 @@ run_model(
     x,
     y,
     xt,
-    yt
+    yt,
+    debug_print_freq = 20
 )
 
 fbStat0 = l0.get("FbStat")

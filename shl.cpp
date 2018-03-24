@@ -26,7 +26,8 @@ extern "C" {
 		TLayerConfig* layerStates,
 		TNetConfig c,
 		TData trainData,
-		TData testData
+		TData testData,
+		ui32 debugPrintFreq
 	);
 	SHL_API TStructure get_structure_info();
 }
@@ -127,6 +128,45 @@ TMatrix<NRows, NCols> Sigmoid(TMatrix<NRows, NCols> x) {
 	return 1.0/(1.0 + (-x.array()).exp());
 }
 
+template <int Input, int Output>
+struct TSGDLearningRule {
+	TSGDLearningRule(TMatrix<Input, Output>* param): Param(*param) {}
+
+	void Update(TMatrix<Input, Output>* dparam, double learningRate) {
+		Param += learningRate * (*dparam);
+		*dparam = TMatrix<Input, Output>::Zero(); 
+	}
+
+	TMatrix<Input, Output>& Param;
+};
+
+
+template <int Input, int Output>
+struct TAdadeltaLearningRule {
+	TAdadeltaLearningRule(TMatrix<Input, Output>* param): Param(*param) {
+		AverageGradient = TMatrix<Input, Output>::Zero();
+	}
+
+	void Update(TMatrix<Input, Output>* dparam, double learningRate) {
+		AverageGradient += (dparam->array().square().matrix() - AverageGradient) / 1000.0;
+		
+		Param += learningRate * (dparam->array() / (AverageGradient.array().sqrt() + 1e-05)).matrix();
+
+		*dparam = TMatrix<Input, Output>::Zero(); 
+	}
+
+	TMatrix<Input, Output>& Param;
+	TMatrix<Input, Output> AverageGradient;
+};
+
+
+template <template <int, int> class TLearningRule, int Input, int Output>
+auto MakeLearningRule(TMatrix<Input, Output>* param) {
+	return TLearningRule<Input, Output>(param);
+}
+
+
+
 
 struct TNetConfig {
 	double Dt;
@@ -138,6 +178,8 @@ struct TNetConfig {
  	TMatrixFlat YMeanStat;
 };
 
+template <int Input, int Output>
+using DefaultLearningRule = TAdadeltaLearningRule<Input, Output>;
 
 static constexpr int InputSize = 4;
 static constexpr int LayerSize = 30;
@@ -171,42 +213,6 @@ struct TData {
 	}
 };
 
-template <int Input, int Output>
-struct TSGDLearningRule {
-	TSGDLearningRule(TMatrix<Input, Output>& param): Param(param) {}
-
-	void Update(TMatrix<Input, Output>& dparam, double learningRate) {
-		Param += learningRate * dparam;
-		dparam = TMatrix<Input, Output>::Zero(); 
-	}
-
-	TMatrix<Input, Output>& Param;
-};
-
-
-template <int Input, int Output>
-struct TAdadeltaLearningRule {
-	TAdadeltaLearningRule(TMatrix<Input, Output>& param): Param(param) {
-		AverageGradient = TMatrix<Input, Output>::Zero();
-	}
-
-	void Update(TMatrix<Input, Output>& dparam, double learningRate) {
-		AverageGradient += (dparam.array().square().matrix() - AverageGradient) / 1000.0;
-		
-		Param += learningRate * (dparam.array() / (AverageGradient.array().sqrt() + 1e-05)).matrix();
-
-		dparam = TMatrix<Input, Output>::Zero(); 
-	}
-
-	TMatrix<Input, Output>& Param;
-	TMatrix<Input, Output> AverageGradient;
-};
-
-
-template <template <int, int> class TLearningRule, int Input, int Output>
-auto MakeLearningRule(TMatrix<Input, Output>& param) {
-	return TLearningRule<Input, Output>(param);
-}
 
 struct TLayerConfig {
 	double TauSoma;
@@ -226,13 +232,13 @@ struct TLayerConfig {
 };
 
 
-template <int InputSize, int LayerSize, template <int, int> class TLearningRule = TAdadeltaLearningRule>
+template <int InputSize, int LayerSize, template <int, int> class TLearningRule = DefaultLearningRule>
 struct TLayer {
 	TLayer(TLayerConfig s0, TNetConfig c0)
 		: c(c0)
 		, s(s0) 
-		, WLearning(MakeLearningRule<TLearningRule>(W))
-		, BLearning(MakeLearningRule<TLearningRule>(B))
+		, WLearning(MakeLearningRule<TLearningRule>(&W))
+		, BLearning(MakeLearningRule<TLearningRule>(&B))
 	{
 		W = TMatrixFlat::ToEigen<InputSize, LayerSize>(s.W);
 		B = TMatrixFlat::ToEigen<1, LayerSize>(s.B);
@@ -297,8 +303,8 @@ struct TLayer {
 	}
 
 	void ApplyGradients() {
-		WLearning.Update(dW, c.LearningRate);
-		BLearning.Update(dB, c.LearningRate);
+		WLearning.Update(&dW, c.LearningRate);
+		BLearning.Update(&dB, c.LearningRate);
 
 	}
 
@@ -413,7 +419,8 @@ int run_model(
 	TLayerConfig* layerStates,
 	TNetConfig c,
 	TData trainData,
-	TData testData
+	TData testData,
+	ui32 debugPrintFreq
 ) {
 	try {
 		std::cout.precision(5);
@@ -443,12 +450,14 @@ int run_model(
 			for (ui32 bi = 0; bi < testNumBatches; ++bi) {
 				net.RunOverBatch</*learn*/false>(testData, bi, &testStats);
 			}
-			std::cout << "Epoch: " << e << "\n";
-			std::cout << "\tTrain; sq.error: " << trainStats.SquaredError / trainNumBatches;
-			std::cout << " class.error: " << trainStats.ClassificationError / trainNumBatches << "\n"; 
-			std::cout << "\tTest; sq.error: " << testStats.SquaredError / testNumBatches;
-			std::cout << " class.error: " << testStats.ClassificationError / testNumBatches << "\n"; 
 
+			if ((e == 0) || (e % debugPrintFreq == 0)) {
+				std::cout << "Epoch: " << e << "\n";
+				std::cout << "\tTrain; sq.error: " << trainStats.SquaredError / trainNumBatches;
+				std::cout << " class.error: " << trainStats.ClassificationError / trainNumBatches << "\n"; 
+				std::cout << "\tTest; sq.error: " << testStats.SquaredError / testNumBatches;
+				std::cout << " class.error: " << testStats.ClassificationError / testNumBatches << "\n"; 				
+			}
 			net.ApplyGradients();
 		}
 
