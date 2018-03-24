@@ -171,6 +171,43 @@ struct TData {
 	}
 };
 
+template <int Input, int Output>
+struct TSGDLearningRule {
+	TSGDLearningRule(TMatrix<Input, Output>& param): Param(param) {}
+
+	void Update(TMatrix<Input, Output>& dparam, double learningRate) {
+		Param += learningRate * dparam;
+		dparam = TMatrix<Input, Output>::Zero(); 
+	}
+
+	TMatrix<Input, Output>& Param;
+};
+
+
+template <int Input, int Output>
+struct TAdadeltaLearningRule {
+	TAdadeltaLearningRule(TMatrix<Input, Output>& param): Param(param) {
+		AverageGradient = TMatrix<Input, Output>::Zero();
+	}
+
+	void Update(TMatrix<Input, Output>& dparam, double learningRate) {
+		AverageGradient += (dparam.array().square().matrix() - AverageGradient) / 1000.0;
+		
+		Param += learningRate * (dparam.array() / (AverageGradient.array().sqrt() + 1e-05)).matrix();
+
+		dparam = TMatrix<Input, Output>::Zero(); 
+	}
+
+	TMatrix<Input, Output>& Param;
+	TMatrix<Input, Output> AverageGradient;
+};
+
+
+template <template <int, int> class TLearningRule, int Input, int Output>
+auto MakeLearningRule(TMatrix<Input, Output>& param) {
+	return TLearningRule<Input, Output>(param);
+}
+
 struct TLayerConfig {
 	double TauSoma;
 	double TauSyn;
@@ -189,9 +226,14 @@ struct TLayerConfig {
 };
 
 
-template <int InputSize, int LayerSize>
+template <int InputSize, int LayerSize, template <int, int> class TLearningRule = TAdadeltaLearningRule>
 struct TLayer {
-	TLayer(TLayerConfig s0, TNetConfig c0): c(c0), s(s0) {
+	TLayer(TLayerConfig s0, TNetConfig c0)
+		: c(c0)
+		, s(s0) 
+		, WLearning(MakeLearningRule<TLearningRule>(W))
+		, BLearning(MakeLearningRule<TLearningRule>(B))
+	{
 		W = TMatrixFlat::ToEigen<InputSize, LayerSize>(s.W);
 		B = TMatrixFlat::ToEigen<1, LayerSize>(s.B);
 
@@ -255,11 +297,9 @@ struct TLayer {
 	}
 
 	void ApplyGradients() {
-		W += c.LearningRate * dW;
-		B += c.LearningRate * dB;
+		WLearning.Update(dW, c.LearningRate);
+		BLearning.Update(dB, c.LearningRate);
 
-		dW = TMatrix<InputSize, LayerSize>::Zero(); 
-		dB = TMatrix<1, LayerSize>::Zero(); 
 	}
 
 	TNetConfig c;
@@ -267,10 +307,7 @@ struct TLayer {
 
 	std::function<TMatrix<BatchSize, LayerSize>(TMatrix<BatchSize, LayerSize>)> Act;
 	std::function<TMatrix<BatchSize, LayerSize>(TMatrix<BatchSize, LayerSize>)> ActDeriv;
-
-	TMatrix<InputSize, LayerSize> W;
-	TMatrix<1, LayerSize> B;
-
+	
 	TMatrix<BatchSize, InputSize> Syn;
 	TMatrix<BatchSize, LayerSize> U;
 	TMatrix<BatchSize, LayerSize> A;
@@ -278,8 +315,15 @@ struct TLayer {
 	TMatrixD UStat;
 	TMatrixD AStat;
 	TMatrixD FbStat;
+	
+	TMatrix<InputSize, LayerSize> W;
+	TMatrix<1, LayerSize> B;
+
 	TMatrix<InputSize, LayerSize> dW;
 	TMatrix<1, LayerSize> dB;
+	
+	TLearningRule<InputSize, LayerSize> WLearning;
+	TLearningRule<1, LayerSize> BLearning;
 };
 
 struct TStats {
