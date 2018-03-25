@@ -6,6 +6,7 @@ from binding import *
 from util import *
 from datasets import *
 from sklearn.metrics import log_loss
+from poc.common import Relu
 
 np.random.seed(10)
 
@@ -30,7 +31,7 @@ xt, yt = ds.test_data
 _, input_size, _, output_size = x.shape + y.shape
 batch_size = 40
 seq_length = 50
-layer_size = 50
+layer_size = 45
 
 c = NetConfig(
     Dt = 1.0,
@@ -48,11 +49,11 @@ net = (
         Size = layer_size,
         TauSoma = 1.0,
         TauSyn = 5.0,
-        TauMean = 0.0,
+        TauMean = 100.0,
         ApicalGain = 1.0,
         FbFactor = 0.0,
         Act = RELU,
-        GradProc = NO_GRADIENT_PROCESSING,
+        GradProc = HEBB,
         W = xavier_init(input_size, layer_size),
         B = np.zeros((1, layer_size)),
         dW = np.zeros((input_size, layer_size)),
@@ -82,19 +83,27 @@ net = (
     ),
 )
 
-l0, l1 = net
-
 
 trainStats, testStats = run_model(
-    200,
+    1,
     net,
     c,
     x,
     y,
     xt,
     yt,
-    test_freq = 50
+    test_freq = 1
 )
+
+
+l0 = net[0]
+l1 = net[1]
+
+de = np.dot(l1.get("W"), l1.get("FbStat")[:,11].T) * Relu().deriv(l0.get("AStat")[:,11]).T
+den = l0.get("FbStat")[:,11].T
+shl(de[0], den[0]/15.0)
+
+print np.mean(np.equal(np.sign(den), np.sign(de)))
 
 st = trainStats
 SquaredError = st.get("SquaredError")

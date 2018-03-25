@@ -163,11 +163,11 @@ enum EGradientProcessing {
 	EGP_HEBB = 3
 };
 
-void NoGradientProcessing(TMatrix a, TMatrix* de, TStatsRecord* stat) {
+void NoGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat) {
 	stat->SignAgreement += 1.0;
 }
 
-void LocalLtdGradientProcessing(TMatrix a, TMatrix* de, TStatsRecord* stat) {
+void LocalLtdGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat) {
 	ui32 signAgreement = 0;
 	for (ui32 i=0; i<de->rows(); ++i) {
 		for (ui32 j=0; j<de->cols(); ++j) {
@@ -181,7 +181,7 @@ void LocalLtdGradientProcessing(TMatrix a, TMatrix* de, TStatsRecord* stat) {
 	stat->SignAgreement += signAgreement / (de->rows() * de->cols());
 }
 
-void NonLinearGradientProcessing(TMatrix a, TMatrix* de, TStatsRecord* stat) {
+void NonLinearGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat) {
 	ui32 signAgreement = 0;
 	for (ui32 i=0; i<de->rows(); ++i) {
 		for (ui32 j=0; j<de->cols(); ++j) {
@@ -197,8 +197,13 @@ void NonLinearGradientProcessing(TMatrix a, TMatrix* de, TStatsRecord* stat) {
 			if (origValue <= 0.0) {
 				value -= a(i, j);  // Local ltd	
 			}
-
-			signAgreement += sgn(origValue) == sgn(value);
+			
+			if ((origValue > 1e-10) && (value > 1e-10)) {
+				signAgreement += 1.0;	
+			}
+			if ((origValue < -1e-10) && (value < -1e-10)) {
+				signAgreement += 1.0;	
+			}
 		}
 	}
 	stat->SignAgreement += signAgreement / (de->rows() * de->cols());
@@ -208,8 +213,7 @@ void NonLinearGradientProcessing(TMatrix a, TMatrix* de, TStatsRecord* stat) {
 // TODO: 
 // - gain for A mean
 // - adaptation
-void HebbGradientProcessing(TMatrix a, TMatrix* de, TStatsRecord* stat) {
-	double aMean = a.mean();
+void HebbGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat) {
 	ui32 signAgreement = 0;
 
 	for (ui32 i=0; i<de->rows(); ++i) {
@@ -220,12 +224,18 @@ void HebbGradientProcessing(TMatrix a, TMatrix* de, TStatsRecord* stat) {
 			if (value < 0.0) {
 				value = 0.0;  // Rectification
 			}
-			value = 1.0/(1.0 + exp(-100.0*value)) - 0.5;  // Non-linear step			
-			value *= 10.0;
+			
+			value = 10.0 * (1.0/(1.0 + exp(-100.0*value)) - 0.5);  // Non-linear step
 			value += a(i, j);
-			value *= sgn(value - 3.0*aMean);
+			value *= sgn(value - am(0, j));
 
-			signAgreement += sgn(origValue) == sgn(value);
+			// signAgreement += sgn(origValue) == sgn(value);
+			if ((origValue > 1e-10) && (value > 1e-10)) {
+				signAgreement += 1.0;
+			} else
+			if ((origValue < -1e-10) && (value < -1e-10)) {
+				signAgreement += 1.0;	
+			}
 		}
 	}
 	stat->SignAgreement += signAgreement / (de->rows() * de->cols());
@@ -379,12 +389,13 @@ struct TLayer {
 		if (collectStats) {
 			UStat.block(0, t*LayerSize, BatchSize, LayerSize) = U;
 			AStat.block(0, t*LayerSize, BatchSize, LayerSize) = A;
-			FbStat.block(0, t*LayerSize, BatchSize, LayerSize) = fb;			
+			FbStat.block(0, t*LayerSize, BatchSize, LayerSize) = fb;
 		}
 		
 		if (learn) {
 			if (s.TauMean > 1e-10) {
-				Am += (A.colwise().mean() - Am) / s.TauMean;	
+				Am += c.Dt * (s.ApicalGain * A.colwise().mean() - Am / s.TauMean);
+				// Am += c.Dt * (A.colwise().mean() - Am) / s.TauMean;
 			}
 
 			dW += Syn.transpose() * fb;
@@ -409,7 +420,7 @@ struct TLayer {
 	std::function<TMatrix(TMatrix)> Act;
 	std::function<TMatrix(TMatrix)> ActDeriv;
 	
-	std::function<void(TMatrix, TMatrix*, TStatsRecord*)> GradProc;
+	std::function<void(TMatrix, TMatrix, TMatrix*, TStatsRecord*)> GradProc;
 
 	TMatrix Syn;
 	TMatrix U;
@@ -462,33 +473,37 @@ struct TNet {
 		TMatrix yAcc = TMatrix::Zero(c.BatchSize, OutputSize);
 		TMatrix aAcc = TMatrix::Zero(c.BatchSize, OutputSize);
 		
+		std::vector<TMatrix> feedback;
+		for (ui32 li=0; li < Layers.size(); ++li) {
+			feedback.push_back(TMatrix::Zero(c.BatchSize, Layers[li].LayerSize));
+		}
 		
 
 		for (ui32 t=0; t < c.SeqLength; ++t) {	
 			TMatrix x = data.ReadInput(batchIdx, t);
 			TMatrix y = data.ReadOutput(batchIdx, t);
-			TMatrix deFeedback = \
-				deSeq.block(0, t*OutputSize, c.BatchSize, OutputSize);
-
-			std::vector<TMatrix> feedback(Layers.size());
-
-			for (int li=Layers.size()-1; li>=0; --li) {
-				if (li == Layers.size()-1) {
-					feedback[li] = deFeedback;
-				} else {
-					TMatrix a0Deriv = Layers[li].ActDeriv(Layers[li].U);
-					feedback[li] = \
-						a0Deriv.array() * (feedback[li+1] * Layers[li+1].W.transpose()).array();
-					Layers[li].GradProc(Layers[li].A, &feedback[li], stats);
-				}
-				
-			}
+			
+			feedback.back() = deSeq.block(0, t*OutputSize, c.BatchSize, OutputSize);
 
 			TMatrix current;
 			for (ui32 li=0; li < Layers.size(); ++li) {
-				current = Layers[li].Run<learn>(t, li==0? x : current, feedback[li], collectStats);
+				bool isHidden = li < Layers.size()-1;
+				if (isHidden) {
+					TMatrix a0Deriv = Layers[li].ActDeriv(Layers[li].U);	
+					feedback[li] = \
+						a0Deriv.array() * (feedback[li+1] * Layers[li+1].W.transpose()).array();
+
+					Layers[li].GradProc(Layers[li].A, Layers[li].Am, &feedback[li], stats);
+				}
+
+				current = Layers[li].Run<learn>(
+					t, 
+					li==0? x : current, 
+					feedback[li], 
+					collectStats
+				);
 				
-				if (li < Layers.size()-1) {
+				if (isHidden) {
 					stats->AverageActivity += current.mean();
 
 					stats->Sparsity += current.unaryExpr([](double v) {
