@@ -9,22 +9,6 @@ lib_dir = os.path.dirname(os.path.realpath(__file__))
 _shllib = np.ctypeslib.load_library('libshl', lib_dir)
 
 
-class Structure(ct.Structure):
-    _fields_ = [
-        ("InputSize", ct.c_int),
-        ("LayerSize", ct.c_int),
-        ("OutputSize", ct.c_int),
-        ("BatchSize", ct.c_int),
-        ("LayersNum", ct.c_int),
-        ("SeqLength", ct.c_int),
-    ]
-
-
-def get_structure_info():
-    return _shllib.get_structure_info()
-
-_shllib.get_structure_info.restype = Structure
-
 
 def reshape_from_flat(m_raw, orig_size):
     if len(orig_size) == 3:
@@ -60,16 +44,6 @@ class MatrixFlat(ct.Structure):
     ]
 
 
-
-
-struc_info = get_structure_info()
-
-input_size = struc_info.InputSize
-layer_size = struc_info.LayerSize
-output_size = struc_info.OutputSize
-batch_size = struc_info.BatchSize
-layers_num = struc_info.LayersNum
-seq_length = struc_info.SeqLength
 
 class ComplexStructure(ct.Structure):
     def __init__(self, **kwargs):
@@ -123,11 +97,14 @@ class Data(ComplexStructure):
     _fields_ = [
         ("X", MatrixFlat),
         ("Y", MatrixFlat),
+        ("BatchSize", ct.c_uint),
     ]
 
 class NetConfig(ComplexStructure):
     _fields_ = [
         ("Dt", ct.c_double),
+        ("SeqLength", ct.c_uint),
+        ("BatchSize", ct.c_uint),
         ("LearningRate", ct.c_double),
         ("FeedbackDelay", ct.c_uint),
         ("OutputTau", ct.c_double),
@@ -137,6 +114,7 @@ class NetConfig(ComplexStructure):
 
 class LayerConfig(ComplexStructure):
     _fields_ = [
+        ("Size", ct.c_uint),
         ("TauSoma", ct.c_double),
         ("TauSyn", ct.c_double),
         ("TauMean", ct.c_double),
@@ -159,6 +137,7 @@ _shllib.run_model.restype = ct.c_int
 _shllib.run_model.argtypes = [
     ct.c_uint,
     ct.POINTER(LayerConfig),
+    ct.c_uint,
     NetConfig,
     Data,
     Data,
@@ -169,17 +148,17 @@ RELU, SIGMOID = 0, 1
 NO_GRADIENT_PROCESSING, LOCAL_LTD, NONLINEAR, HEBB = 0, 1, 2, 3
 
 def run_model(epochs, layers, config, train_input, train_output, test_input, test_output, test_freq=1):
-    assert len(layers) == layers_num, "Expecting {} number of layers".format(layers_num)
     layers_s = (LayerConfig * len(layers))()
     for li, l in enumerate(layers):
         layers_s[li] = l
 
-    trainInp = Data(X=train_input, Y=train_output) 
-    testInp = Data(X=test_input, Y=test_output) 
+    trainInp = Data(X=train_input, Y=train_output, BatchSize=config.BatchSize) 
+    testInp = Data(X=test_input, Y=test_output, BatchSize=config.BatchSize) 
 
     retcode = _shllib.run_model(
         epochs,
         layers_s,
+        len(layers),
         config,
         trainInp,
         testInp,

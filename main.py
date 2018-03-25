@@ -27,9 +27,15 @@ xt, yt = ds.test_data
 
 # yt = np.concatenate((yt, yt), axis=1) # use it for 1 layer output
 
+_, input_size, _, output_size = x.shape + y.shape
+batch_size = 40
+seq_length = 50
+layer_size = 50
 
 c = NetConfig(
     Dt = 1.0,
+    SeqLength=seq_length,
+    BatchSize=batch_size,
     LearningRate=0.001,
     FeedbackDelay=1,
     OutputTau=5.0,
@@ -39,13 +45,14 @@ c = NetConfig(
 
 net = (
     LayerConfig(
+        Size = layer_size,
         TauSoma = 1.0,
         TauSyn = 5.0,
         TauMean = 100.0,
         ApicalGain = 1.0,
         FbFactor = 0.0,
         Act = RELU,
-        GradProc = HEBB,
+        GradProc = NO_GRADIENT_PROCESSING,
         W = xavier_init(input_size, layer_size),
         B = np.zeros((1, layer_size)),
         dW = np.zeros((input_size, layer_size)),
@@ -55,6 +62,7 @@ net = (
         FbStat = np.zeros((batch_size, seq_length, layer_size)),
     ),
     LayerConfig(
+        Size = output_size,
         TauSoma = 1.0,
         TauSyn = 1.0,
         TauMean = 100.0,
@@ -75,14 +83,14 @@ net = (
 l0, l1 = net
 
 run_model(
-    100,
+    1000,
     net,
     c,
     x,
     y,
     xt,
     yt,
-    test_freq = 20
+    test_freq = 200
 )
 
 fbStat0 = l0.get("FbStat")

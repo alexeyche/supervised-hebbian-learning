@@ -9,27 +9,17 @@ struct TData;
 
 using ui32 = unsigned int;
 
-struct TStructure {
-	int InputSize;
-	int LayerSize;
-	int OutputSize;
-	int BatchSize;
-	int LayersNum;
-	int SeqLength;
-};
-
-
 extern "C" {
 	
 	SHL_API int run_model(
 		ui32 epochs,
 		TLayerConfig* layerStates,
+		ui32 layersNum,
 		TNetConfig c,
 		TData trainData,
 		TData testData,
 		ui32 debugPrintFreq
 	);
-	SHL_API TStructure get_structure_info();
 }
 
 ////////////////////////////////////
@@ -54,14 +44,7 @@ extern "C" {
     }\
 
 
-template <int nrows, int ncols>
-// using TMatrix = Eigen::Matrix<float, nrows, ncols, Eigen::RowMajor>;
 using TMatrix = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
-
-template <int nrows, int ncols>
-using TMatrixCM = Eigen::Matrix<float, nrows, ncols, Eigen::ColMajor>;
-
-using TMatrixD = TMatrix<Eigen::Dynamic, Eigen::Dynamic>;
 
 #define CheckSizeMatch(m, mf) \
 	ENSURE(m.rows() == mf.NRows,  \
@@ -72,43 +55,23 @@ using TMatrixD = TMatrix<Eigen::Dynamic, Eigen::Dynamic>;
 			<< mf.NCols << " != " << m.cols() << " (latter is expected)");
 
 
-template <int nrows, int ncols>
-TMatrix<nrows, ncols> ZeroMatrix() {
-	return TMatrixD::Zero(nrows, ncols);
-}
 
 struct TMatrixFlat {
   	float* Data;
   	ui32 NRows; 
   	ui32 NCols;
 
-  	template <int NRows, int NCols>
-  	static TMatrix<NRows, NCols> ToEigen(TMatrixFlat flat) {
-  		ENSURE(flat.NRows == NRows, "Rows do not match while reading flat matrix from the outside");
-  		ENSURE(flat.NCols == NCols, "Cols do not match while reading flat matrix from the outside");
-
-  		return Eigen::Map<TMatrix<NRows, NCols>>(
+  	static TMatrix ToEigen(TMatrixFlat flat) {
+  		return Eigen::Map<TMatrix>(
   			flat.Data, flat.NRows, flat.NCols
   		);
   	}
 
-  	static TMatrixD ToEigenDynamic(TMatrixFlat flat) {
-  		return Eigen::Map<TMatrixD>(flat.Data, flat.NRows, flat.NCols);
-  	}
-
-  	template <int NRows, int NCols>
-  	static void FromEigen(TMatrix<NRows, NCols> m, TMatrixFlat* dst) {
-  		ENSURE(NRows == dst->NRows, "Rows are not aligned for saving eigen matrix");
-  		ENSURE(NCols == dst->NCols, "Cols are not aligned for saving eigen matrix");
-
-  		memcpy(dst->Data, m.data(), sizeof(float) * NRows * NCols);
-  	}
-
-  	static void FromEigenDynamic(TMatrixD m, TMatrixFlat* dst) {
+  	static void FromEigen(TMatrix m, TMatrixFlat* dst) {
   		ENSURE(m.rows() == dst->NRows, "Rows are not aligned for saving eigen matrix");
   		ENSURE(m.cols() == dst->NCols, "Cols are not aligned for saving eigen matrix");
 
-  		memcpy(dst->Data, m.data(), sizeof(float) * m.rows() * m.cols());
+  		memcpy(dst->Data, m.data(), sizeof(float) * dst->NRows * dst->NCols);
   	}
 };
 
@@ -130,13 +93,11 @@ enum EActivation {
 	EA_SIGMOID = 1
 };
 
-template <int NRows, int NCols>
-TMatrix<NRows, NCols> Relu(TMatrix<NRows, NCols> x) {
+TMatrix Relu(TMatrix x) {
 	return x.array().cwiseMax(0.0); //.cwiseMin(1.0);
 }
 
-template <int NRows, int NCols>
-TMatrix<NRows, NCols> ReluDeriv(TMatrix<NRows, NCols> x) {
+TMatrix ReluDeriv(TMatrix x) {
 	return x.unaryExpr(
 		[](const float xv) { 
 			return xv > static_cast<float>(0.0) ? 1.0f : 0.0f;
@@ -144,8 +105,7 @@ TMatrix<NRows, NCols> ReluDeriv(TMatrix<NRows, NCols> x) {
 	);
 }
 
-template <int NRows, int NCols>
-TMatrix<NRows, NCols> Sigmoid(TMatrix<NRows, NCols> x) {
+TMatrix Sigmoid(TMatrix x) {
 	return 1.0/(1.0 + (-x.array()).exp());
 }
 
@@ -153,42 +113,32 @@ TMatrix<NRows, NCols> Sigmoid(TMatrix<NRows, NCols> x) {
 // Learning rules
 ////////////////////////////////////
 
-template <int Input, int Output>
 struct TSGDLearningRule {
-	TSGDLearningRule(TMatrix<Input, Output>* param): Param(*param) {}
+	TSGDLearningRule(TMatrix param) {}
 
-	void Update(TMatrix<Input, Output>* dparam, double learningRate) {
-		Param += learningRate * (*dparam);
-		*dparam = ZeroMatrix<Input, Output>(); 
+	void Update(TMatrix* param, TMatrix* dparam, double learningRate) {
+		*param += learningRate * (*dparam);
+		dparam->setZero();
 	}
-
-	TMatrix<Input, Output>& Param;
 };
 
 
-template <int Input, int Output>
 struct TAdadeltaLearningRule {
-	TAdadeltaLearningRule(TMatrix<Input, Output>* param): Param(*param) {
-		AverageGradient = ZeroMatrix<Input, Output>();
+	TAdadeltaLearningRule(TMatrix param) {
+		AverageGradient = TMatrix::Zero(param.rows(), param.cols());
 	}
 
-	void Update(TMatrix<Input, Output>* dparam, double learningRate) {
+	void Update(TMatrix* param, TMatrix* dparam, double learningRate) {
 		AverageGradient += (dparam->array().square().matrix() - AverageGradient) / 1000.0;
 		
-		Param += learningRate * (dparam->array() / (AverageGradient.array().sqrt() + 1e-05)).matrix();
+		*param += learningRate * (dparam->array() / (AverageGradient.array().sqrt() + 1e-05)).matrix();
 
-		*dparam = ZeroMatrix<Input, Output>();
+		dparam->setZero();
 	}
 
-	TMatrix<Input, Output>& Param;
-	TMatrix<Input, Output> AverageGradient;
+	TMatrix AverageGradient;
 };
 
-
-template <template <int, int> class TLearningRule, int Input, int Output>
-auto MakeLearningRule(TMatrix<Input, Output>* param) {
-	return TLearningRule<Input, Output>(param);
-}
 
 
 ////////////////////////////////////
@@ -202,13 +152,11 @@ enum EGradientProcessing {
 	EGP_HEBB = 3
 };
 
-template <int NRows, int NCols>
-void NoGradientProcessing(TMatrix<NRows, NCols> a, TMatrix<NRows, NCols>* de) {}
+void NoGradientProcessing(TMatrix a, TMatrix* de) {}
 
-template <int NRows, int NCols>
-void LocalLtdGradientProcessing(TMatrix<NRows, NCols> a, TMatrix<NRows, NCols>* de) {
-	for (ui32 i=0; i<NRows; ++i) {
-		for (ui32 j=0; j<NCols; ++j) {
+void LocalLtdGradientProcessing(TMatrix a, TMatrix* de) {
+	for (ui32 i=0; i<de->rows(); ++i) {
+		for (ui32 j=0; j<de->cols(); ++j) {
 			if ((*de)(i, j) < 0.0) {
 				(*de)(i, j) = - a(i, j);
 			}
@@ -216,10 +164,9 @@ void LocalLtdGradientProcessing(TMatrix<NRows, NCols> a, TMatrix<NRows, NCols>* 
 	}
 }
 
-template <int NRows, int NCols>
-void NonLinearGradientProcessing(TMatrix<NRows, NCols> a, TMatrix<NRows, NCols>* de) {
-	for (ui32 i=0; i<NRows; ++i) {
-		for (ui32 j=0; j<NCols; ++j) {
+void NonLinearGradientProcessing(TMatrix a, TMatrix* de) {
+	for (ui32 i=0; i<de->rows(); ++i) {
+		for (ui32 j=0; j<de->cols(); ++j) {
 			float& value = (*de)(i, j);
 			
 			if (value < 0.0) {
@@ -236,12 +183,11 @@ void NonLinearGradientProcessing(TMatrix<NRows, NCols> a, TMatrix<NRows, NCols>*
 // TODO: 
 // - gain for A mean
 // - adaptation
-template <int NRows, int NCols>
-void HebbGradientProcessing(TMatrix<NRows, NCols> a, TMatrix<NRows, NCols>* de) {
+void HebbGradientProcessing(TMatrix a, TMatrix* de) {
 	double aMean = a.mean();
 
-	for (ui32 i=0; i<NRows; ++i) {
-		for (ui32 j=0; j<NCols; ++j) {
+	for (ui32 i=0; i<de->rows(); ++i) {
+		for (ui32 j=0; j<de->cols(); ++j) {
 			float& value = (*de)(i, j);
 			
 			if (value < 0.0) {
@@ -261,6 +207,8 @@ void HebbGradientProcessing(TMatrix<NRows, NCols> a, TMatrix<NRows, NCols>* de) 
 
 struct TNetConfig {
 	double Dt;
+	ui32 SeqLength;
+	ui32 BatchSize;
  	double LearningRate;
  	ui32 FeedbackDelay;
  	double OutputTau;
@@ -269,52 +217,37 @@ struct TNetConfig {
  	TMatrixFlat YMeanStat;
 };
 
-template <int Input, int Output>
-using DefaultLearningRule = TAdadeltaLearningRule<Input, Output>;
-
-static constexpr int InputSize = 4;
-static constexpr int LayerSize = 30;
-static constexpr int OutputSize = 2;
-static constexpr int BatchSize = 40;
-static constexpr int LayersNum = 2;
-static constexpr int SeqLength = 50;
-
-// // MNIST conf
-// static constexpr int InputSize = 784;
-// static constexpr int LayerSize = 200;
-// static constexpr int OutputSize = 10;
-// static constexpr int BatchSize = 200;
-// static constexpr int LayersNum = 2;
-// static constexpr int SeqLength = 50;
-
+using TLearningRule = TAdadeltaLearningRule;
 
 struct TData {
 	static constexpr ui32 TimeOfDataSpike = 10;
 
 	TMatrixFlat X;
 	TMatrixFlat Y;
+	ui32 BatchSize;
 
-	TMatrix<BatchSize, InputSize> ReadInput(ui32 bi, ui32 ti) {
+	TMatrix ReadInput(ui32 bi, ui32 ti) {
 		if (TimeOfDataSpike == ti) {
-			return Eigen::Map<TMatrix<BatchSize, InputSize>>(
-  				X.Data + bi*BatchSize*InputSize, BatchSize, InputSize
+			return Eigen::Map<TMatrix>(
+  				X.Data + bi*BatchSize*X.NCols, BatchSize, X.NCols
   			);
 		}
-		return ZeroMatrix<BatchSize, InputSize>();
+		return TMatrix::Zero(BatchSize, X.NCols);
 	}
 
-	TMatrix<BatchSize, OutputSize> ReadOutput(ui32 bi, ui32 ti) {
+	TMatrix ReadOutput(ui32 bi, ui32 ti) {
 		if (TimeOfDataSpike == ti) {
-			return Eigen::Map<TMatrix<BatchSize, OutputSize>>(
-  				Y.Data + bi*BatchSize*OutputSize, BatchSize, OutputSize
+			return Eigen::Map<TMatrix>(
+  				Y.Data + bi*BatchSize*Y.NCols, BatchSize, Y.NCols
   			);
 		}
-		return ZeroMatrix<BatchSize, OutputSize>();
+		return TMatrix::Zero(BatchSize, Y.NCols);
 	}
 };
 
 
 struct TLayerConfig {
+	ui32 Size;
 	double TauSoma;
 	double TauSyn;
  	double TauMean;
@@ -333,84 +266,86 @@ struct TLayerConfig {
 };
 
 
-template <int InputSize, int LayerSize, template <int, int> class TLearningRule = DefaultLearningRule>
 struct TLayer {
-	TLayer(TLayerConfig s0, TNetConfig c0)
-		: c(c0)
-		, s(s0) 
-		, WLearning(MakeLearningRule<TLearningRule, InputSize, LayerSize>(&W))
-		, BLearning(MakeLearningRule<TLearningRule, 1, LayerSize>(&B))
+	TLayer(ui32 inputSize, TLayerConfig s0, TNetConfig c0)
+		: BatchSize(c0.BatchSize)
+		, InputSize(inputSize)
+		, LayerSize(s0.Size)
+		, c(c0)
+		, s(s0)
+		, UStat(TMatrix::Zero(BatchSize, LayerSize*c.SeqLength))
+		, AStat(TMatrix::Zero(BatchSize, LayerSize*c.SeqLength))
+		, FbStat(TMatrix::Zero(BatchSize, LayerSize*c.SeqLength))
+		, W(TMatrixFlat::ToEigen(s.W))
+		, B(TMatrixFlat::ToEigen(s.B))
+		, dW(TMatrix::Zero(InputSize, LayerSize))
+		, dB(TMatrix::Zero(1, LayerSize))
+		, WLearning(TLearningRule(W))
+		, BLearning(TLearningRule(B))
 	{
-		W = TMatrixFlat::ToEigen<InputSize, LayerSize>(s.W);
-		B = TMatrixFlat::ToEigen<1, LayerSize>(s.B);
-
-		UStat = TMatrixD::Zero(BatchSize, LayerSize*SeqLength);
-		AStat = TMatrixD::Zero(BatchSize, LayerSize*SeqLength);
-		FbStat = TMatrixD::Zero(BatchSize, LayerSize*SeqLength);
 		
 		CheckSizeMatch(UStat, s.UStat);
 		CheckSizeMatch(AStat, s.AStat);
 		CheckSizeMatch(FbStat, s.FbStat);
 		
-		dW = ZeroMatrix<InputSize, LayerSize>(); 
-		dB = ZeroMatrix<1, LayerSize>(); 
-		
 		if (s.Act == EA_RELU) {
-			Act = &Relu<BatchSize, LayerSize>;
-			ActDeriv = &ReluDeriv<BatchSize, LayerSize>;
+			Act = &Relu;
+			ActDeriv = &ReluDeriv;
 		} else
 		if (s.Act == EA_SIGMOID) {
-			Act = &Sigmoid<BatchSize, LayerSize>;
+			Act = &Sigmoid;
 		} else {
 			ENSURE(0, "Failed to find activation function #" << s.Act);
 		}
 
 		if (s.GradProc == EGP_NO_GRADIENT_PROCESSING) {
-			GradProc = &NoGradientProcessing<BatchSize, LayerSize>;
+			GradProc = &NoGradientProcessing;
 		} 
 		else if (s.GradProc == EGP_LOCAL_LTD) {
-			GradProc = &LocalLtdGradientProcessing<BatchSize, LayerSize>;
+			GradProc = &LocalLtdGradientProcessing;
 		}
 		else if (s.GradProc == EGP_NONLINEAR) {
-			GradProc = &NonLinearGradientProcessing<BatchSize, LayerSize>;
+			GradProc = &NonLinearGradientProcessing;
 		}
 		else if (s.GradProc == EGP_HEBB) {
-			GradProc = &HebbGradientProcessing<BatchSize, LayerSize>;
+			GradProc = &HebbGradientProcessing;
 		} else {
 			ENSURE(0, "Failed to find gradient processing function #" << s.GradProc);
 		}		
 	}
 
 	~TLayer() {
-		TMatrixFlat::FromEigenDynamic(UStat, &s.UStat);
-		TMatrixFlat::FromEigenDynamic(AStat, &s.AStat);
-		TMatrixFlat::FromEigenDynamic(FbStat, &s.FbStat);
-		TMatrixFlat::FromEigen<InputSize, LayerSize>(W, &s.W);
-		TMatrixFlat::FromEigen<1, LayerSize>(B, &s.B);
-		TMatrixFlat::FromEigen<InputSize, LayerSize>(dW, &s.dW);
-		TMatrixFlat::FromEigen<1, LayerSize>(dB, &s.dB);
+		TMatrixFlat::FromEigen(UStat, &s.UStat);
+		TMatrixFlat::FromEigen(AStat, &s.AStat);
+		TMatrixFlat::FromEigen(FbStat, &s.FbStat);
+		TMatrixFlat::FromEigen(W, &s.W);
+		TMatrixFlat::FromEigen(B, &s.B);
+		TMatrixFlat::FromEigen(dW, &s.dW);
+		TMatrixFlat::FromEigen(dB, &s.dB);
 	}
 
 	void Reset() {
-		Syn = ZeroMatrix<BatchSize, InputSize>();
-		U = ZeroMatrix<BatchSize, LayerSize>();
-		A = ZeroMatrix<BatchSize, LayerSize>();
+		Syn = TMatrix::Zero(BatchSize, InputSize);
+		U = TMatrix::Zero(BatchSize, LayerSize);
+		A = TMatrix::Zero(BatchSize, LayerSize);
 	}
 
 	template <bool learn = true>
-	auto& Run(ui32 t, TMatrix<BatchSize, InputSize> ff, TMatrix<BatchSize, LayerSize> fb) {
+	auto& Run(ui32 t, TMatrix ff, TMatrix fb, bool collectStats) {
 		Syn += c.Dt * (ff - Syn) / s.TauSyn;
 		
 		GradProc(A, &fb);
 		
-		TMatrix<BatchSize, LayerSize> dU = Syn * W + s.FbFactor * fb - U;			
+		TMatrix dU = Syn * W + s.FbFactor * fb - U;			
 
 		U += c.Dt * dU / s.TauSoma;
 		A = Act(U);
 
-		UStat.block(0, t*LayerSize, BatchSize, LayerSize) = U;
-		AStat.block(0, t*LayerSize, BatchSize, LayerSize) = A;
-		FbStat.block(0, t*LayerSize, BatchSize, LayerSize) = fb;
+		if (collectStats) {
+			UStat.block(0, t*LayerSize, BatchSize, LayerSize) = U;
+			AStat.block(0, t*LayerSize, BatchSize, LayerSize) = A;
+			FbStat.block(0, t*LayerSize, BatchSize, LayerSize) = fb;			
+		}
 		
 		if (learn) {
 			dW += Syn.transpose() * fb;
@@ -421,34 +356,38 @@ struct TLayer {
 	}
 
 	void ApplyGradients() {
-		WLearning.Update(&dW, c.LearningRate);
-		BLearning.Update(&dB, c.LearningRate);
+		WLearning.Update(&W, &dW, c.LearningRate);
+		BLearning.Update(&B, &dB, c.LearningRate);
 	}
+
+	ui32 BatchSize;
+	ui32 InputSize;
+	ui32 LayerSize;
 
 	TNetConfig c;
 	TLayerConfig s;
 
-	std::function<TMatrix<BatchSize, LayerSize>(TMatrix<BatchSize, LayerSize>)> Act;
-	std::function<TMatrix<BatchSize, LayerSize>(TMatrix<BatchSize, LayerSize>)> ActDeriv;
+	std::function<TMatrix(TMatrix)> Act;
+	std::function<TMatrix(TMatrix)> ActDeriv;
 	
-	std::function<void(TMatrix<BatchSize, LayerSize>, TMatrix<BatchSize, LayerSize>*)> GradProc;
+	std::function<void(TMatrix, TMatrix*)> GradProc;
 
-	TMatrix<BatchSize, InputSize> Syn;
-	TMatrix<BatchSize, LayerSize> U;
-	TMatrix<BatchSize, LayerSize> A;
+	TMatrix Syn;
+	TMatrix U;
+	TMatrix A;
 	
-	TMatrixD UStat;
-	TMatrixD AStat;
-	TMatrixD FbStat;
+	TMatrix UStat;
+	TMatrix AStat;
+	TMatrix FbStat;
 	
-	TMatrix<InputSize, LayerSize> W;
-	TMatrix<1, LayerSize> B;
+	TMatrix W;
+	TMatrix B;
 
-	TMatrix<InputSize, LayerSize> dW;
-	TMatrix<1, LayerSize> dB;
+	TMatrix dW;
+	TMatrix dB;
 	
-	TLearningRule<InputSize, LayerSize> WLearning;
-	TLearningRule<1, LayerSize> BLearning;
+	TLearningRule WLearning;
+	TLearningRule BLearning;
 };
 
 struct TStats {
@@ -457,54 +396,65 @@ struct TStats {
 };
 
 struct TNet {
-	TNet(TLayerConfig l0, TLayerConfig l1, TNetConfig c0)
-		: L0(l0, c0)
-		, L1(l1, c0)
-		, c(c0)
+	TNet(ui32 inputSize, TLayerConfig* layersConfigs, ui32 layersNum, TNetConfig c0)
+		: c(c0)
 	{
+		for (ui32 li=0; li < layersNum; ++li) {
+			Layers.emplace_back(
+				li == 0 ? inputSize : layersConfigs[li-1].Size,
+				layersConfigs[li], 
+				c
+			);
+		}
+		OutputSize = Layers.back().LayerSize;
+
 		ENSURE(c.FeedbackDelay > 0, "FeedbackDelay should be greater than zero");
 	}
 
 	
 	template <bool learn = true>
-	void RunOverBatch(TData data, ui32 batchIdx, TStats* stats) {
-		TMatrixD deSeq = TMatrixD::Zero(BatchSize, OutputSize*SeqLength);
+	void RunOverBatch(TData data, ui32 batchIdx, TStats* stats, bool collectStats = false) {
+		TMatrix deSeq = TMatrix::Zero(c.BatchSize, OutputSize*c.SeqLength);
 		
-		TMatrixD yMeanStat = TMatrixD::Zero(BatchSize, OutputSize*SeqLength);
-		TMatrix<BatchSize, OutputSize> yMean = TMatrixD::Zero(BatchSize, OutputSize);
+		TMatrix yMeanStat = TMatrix::Zero(c.BatchSize, OutputSize*c.SeqLength);
+		TMatrix yMean = TMatrix::Zero(c.BatchSize, OutputSize);
 		
-		TMatrix<BatchSize, OutputSize> zeros = ZeroMatrix<BatchSize, OutputSize>();
-		TMatrix<BatchSize, LayerSize> lzeros = ZeroMatrix<BatchSize, LayerSize>();
+		TMatrix zeros = TMatrix::Zero(c.BatchSize, OutputSize);
 
-		L0.Reset(); L1.Reset();
+		for (auto& l: Layers) { l.Reset(); }
+		
+		TMatrix yAcc = TMatrix::Zero(c.BatchSize, OutputSize);
+		TMatrix aAcc = TMatrix::Zero(c.BatchSize, OutputSize);
 
-		TMatrix<BatchSize, OutputSize> yAcc = ZeroMatrix<BatchSize, OutputSize>();
-		TMatrix<BatchSize, OutputSize> aAcc = ZeroMatrix<BatchSize, OutputSize>();
+		for (ui32 t=0; t < c.SeqLength; ++t) {	
+			TMatrix x = data.ReadInput(batchIdx, t);
+			TMatrix y = data.ReadOutput(batchIdx, t);
+			TMatrix deFeedback = \
+				deSeq.block(0, t*OutputSize, c.BatchSize, OutputSize);
 
-		for (ui32 t=0; t < SeqLength; ++t) {	
-			TMatrix<BatchSize, InputSize> x = data.ReadInput(batchIdx, t);
-			TMatrix<BatchSize, OutputSize> y = data.ReadOutput(batchIdx, t);
-			TMatrix<BatchSize, OutputSize> deFeedback = \
-				deSeq.block<BatchSize, OutputSize>(0, t*OutputSize);
-
-			TMatrix<BatchSize, LayerSize> dUdE = \
-				L0.ActDeriv(L0.U).array() * (deFeedback * L1.W.transpose()).array();
-			auto& a0 = L0.Run<learn>(t, x, dUdE);
-			auto& a1 = L1.Run<learn>(t, a0, deFeedback);
+			TMatrix dUdE = \
+				Layers.at(0).ActDeriv(Layers.at(0).U).array() * (deFeedback * Layers.at(1).W.transpose()).array();
+			
+			auto& a0 = Layers.at(0).Run<learn>(t, x, dUdE, collectStats);
+			auto& a1 = Layers.at(1).Run<learn>(t, a0, deFeedback, collectStats);
 
 			yMean += c.Dt * (y - yMean / c.OutputTau);
 
-			TMatrix<BatchSize, OutputSize> de = yMean - a1;
+			TMatrix de = yMean - a1;
 			
-			if (t < SeqLength-c.FeedbackDelay) {
-				deSeq.block<BatchSize, OutputSize>(0, (t+c.FeedbackDelay)*OutputSize) = de;
+			if (t < c.SeqLength-c.FeedbackDelay) {
+				deSeq.block(0, (t+c.FeedbackDelay)*OutputSize, c.BatchSize, OutputSize) = de;
 			}
-			yMeanStat.block<BatchSize, OutputSize>(0, t*OutputSize) = yMean;
+			
+			if (collectStats) {
+				yMeanStat.block(0, t*OutputSize, c.BatchSize, OutputSize) = yMean;	
+			}
+			
 			yAcc += y;
 			aAcc += a1;
 		}
 
-		for (ui32 bi=0; bi < BatchSize; ++bi) {
+		for (ui32 bi=0; bi < c.BatchSize; ++bi) {
 			Eigen::MatrixXf::Index yMaxCol;
 			yAcc.row(bi).maxCoeff(&yMaxCol);
 			
@@ -512,30 +462,32 @@ struct TNet {
 			aAcc.row(bi).maxCoeff(&aMaxCol);
 
 			if (yMaxCol != aMaxCol) {
-				stats->ClassificationError += 1.0 / BatchSize;
+				stats->ClassificationError += 1.0 / c.BatchSize;
 			}
 		}
 		stats->SquaredError += deSeq.squaredNorm();
 
-		TMatrixFlat::FromEigenDynamic(deSeq, &c.DeStat);
-		TMatrixFlat::FromEigenDynamic(yMeanStat, &c.YMeanStat);
+		TMatrixFlat::FromEigen(deSeq, &c.DeStat);
+		TMatrixFlat::FromEigen(yMeanStat, &c.YMeanStat);
 	}
 
 	void ApplyGradients() {
-		L0.ApplyGradients();
-		L1.ApplyGradients();
+		for (auto& l: Layers) { l.ApplyGradients(); }
 	}
+
+	ui32 OutputSize;
+	ui32 InputSize;
 
 	TNetConfig c;
 
-	TLayer<InputSize, LayerSize> L0;
-	TLayer<LayerSize, OutputSize> L1;
+	std::vector<TLayer> Layers;
 };
 
 
 int run_model(
 	ui32 epochs,
 	TLayerConfig* layerStates,
+	ui32 layersNum,
 	TNetConfig c,
 	TData trainData,
 	TData testData,
@@ -543,19 +495,14 @@ int run_model(
 ) {
 	try {
 		std::cout.precision(5);
-		ENSURE(trainData.X.NRows % BatchSize == 0, \
-			"Row size of train input data should has no remainder while division on " << BatchSize);
-		ENSURE(trainData.X.NCols == InputSize, "Col size of train input data should be " << InputSize);
-		ENSURE(trainData.Y.NCols == OutputSize, "Col size of train output data should be " << OutputSize);
-		ENSURE(testData.X.NRows % BatchSize == 0, \
-			"Row size of test input data should has no remainder while division on " << BatchSize);
-		ENSURE(testData.X.NCols == InputSize, "Col size of test input data should be " << InputSize);
-		ENSURE(testData.Y.NCols == OutputSize, "Col size of test output data should be " << OutputSize);
-
-		TNet net(layerStates[0], layerStates[1], c);
+		ENSURE(trainData.X.NRows % c.BatchSize == 0, \
+			"Row size of train input data should has no remainder while division on " << c.BatchSize);
 		
-		ui32 trainNumBatches = trainData.X.NRows / BatchSize;
-		ui32 testNumBatches = testData.X.NRows / BatchSize;
+		ui32 inputSize = trainData.X.NCols;
+		TNet net(inputSize, layerStates, layersNum, c);
+		
+		ui32 trainNumBatches = trainData.X.NRows / c.BatchSize;
+		ui32 testNumBatches = testData.X.NRows / c.BatchSize;
 
 		clock_t beginTime = clock();
 		for (ui32 e=0; e<epochs; ++e) {
@@ -571,7 +518,12 @@ int run_model(
 			if ((e == 0) || (e % testFreq == 0) || (e == (epochs-1))) {
 				TStats testStats;
 				for (ui32 bi = 0; bi < testNumBatches; ++bi) {
-					net.RunOverBatch</*learn*/false>(testData, bi, &testStats);
+					net.RunOverBatch</*learn*/false>(
+						testData, 
+						bi, 
+						&testStats, 
+						/*collectStats*/bi == testNumBatches-1
+					);
 				}
 
 				std::cout << "Epoch: " << e << ", " << 1000.0 * float(clock() - beginTime)/ CLOCKS_PER_SEC << "ms\n";
@@ -591,16 +543,4 @@ int run_model(
 		return 1;
 	}
 	return 0;
-}
-
-
-TStructure get_structure_info() {
-	return {
-		InputSize,
-		LayerSize,
-		OutputSize,
-		BatchSize,
-		LayersNum,
-		SeqLength
-	};
 }
