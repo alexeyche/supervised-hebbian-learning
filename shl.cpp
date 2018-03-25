@@ -335,7 +335,7 @@ struct TLayer {
 		Syn += c.Dt * (ff - Syn) / s.TauSyn;
 		
 		GradProc(A, &fb);
-		
+
 		TMatrix dU = Syn * W + s.FbFactor * fb - U;			
 
 		U += c.Dt * dU / s.TauSoma;
@@ -432,26 +432,37 @@ struct TNet {
 			TMatrix deFeedback = \
 				deSeq.block(0, t*OutputSize, c.BatchSize, OutputSize);
 
-			TMatrix dUdE = \
-				Layers.at(0).ActDeriv(Layers.at(0).U).array() * (deFeedback * Layers.at(1).W.transpose()).array();
+			std::vector<TMatrix> feedback(Layers.size());
 			
-			auto& a0 = Layers.at(0).Run<learn>(t, x, dUdE, collectStats);
-			auto& a1 = Layers.at(1).Run<learn>(t, a0, deFeedback, collectStats);
+			for (int li=Layers.size()-1; li>=0; --li) {
+				if (li == Layers.size()-1) {
+					feedback[li] = deFeedback;
+				} else {
+					TMatrix a0Deriv = Layers[li].ActDeriv(Layers[li].U);
+					feedback[li] = \
+						a0Deriv.array() * (feedback[li+1] * Layers[li+1].W.transpose()).array();
+				}
+			}
 
+			TMatrix current;
+			for (ui32 li=0; li < Layers.size(); ++li) {
+				current = Layers[li].Run<learn>(t, li==0? x : current, feedback[li], collectStats);
+			}
+			
 			yMean += c.Dt * (y - yMean / c.OutputTau);
 
-			TMatrix de = yMean - a1;
+			TMatrix de = yMean - current;
 			
 			if (t < c.SeqLength-c.FeedbackDelay) {
 				deSeq.block(0, (t+c.FeedbackDelay)*OutputSize, c.BatchSize, OutputSize) = de;
 			}
-			
+
 			if (collectStats) {
-				yMeanStat.block(0, t*OutputSize, c.BatchSize, OutputSize) = yMean;	
+				yMeanStat.block(0, t*OutputSize, c.BatchSize, OutputSize) = yMean;
 			}
 			
 			yAcc += y;
-			aAcc += a1;
+			aAcc += current;
 		}
 
 		for (ui32 bi=0; bi < c.BatchSize; ++bi) {
