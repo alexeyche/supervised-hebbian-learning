@@ -126,12 +126,30 @@ class LayerConfig(ComplexStructure):
         ("B", MatrixFlat),
         ("dW", MatrixFlat),
         ("dB", MatrixFlat),
+        ("Am", MatrixFlat),
         ("UStat", MatrixFlat),
         ("AStat", MatrixFlat),
         ("FbStat", MatrixFlat),
     ]
 
+class Stats(ComplexStructure):
+    _fields_ = [
+        ("SquaredError", MatrixFlat),
+        ("ClassificationError", MatrixFlat),
+        ("SignAgreement", MatrixFlat),
+        ("AverageActivity", MatrixFlat),
+        ("Sparsity", MatrixFlat),
+    ]
 
+    @staticmethod
+    def construct(epochs):
+        return Stats(
+            SquaredError = np.zeros((1, epochs)),
+            ClassificationError = np.zeros((1, epochs)),
+            SignAgreement = np.zeros((1, epochs)),
+            AverageActivity = np.zeros((1, epochs)),
+            Sparsity = np.zeros((1, epochs)),
+        )
 
 _shllib.run_model.restype = ct.c_int
 _shllib.run_model.argtypes = [
@@ -141,6 +159,8 @@ _shllib.run_model.argtypes = [
     NetConfig,
     Data,
     Data,
+    Stats,
+    Stats,
     ct.c_uint
 ]
 
@@ -155,6 +175,9 @@ def run_model(epochs, layers, config, train_input, train_output, test_input, tes
     trainInp = Data(X=train_input, Y=train_output, BatchSize=config.BatchSize) 
     testInp = Data(X=test_input, Y=test_output, BatchSize=config.BatchSize) 
 
+    trainStats = Stats.construct(epochs)
+    testStats = Stats.construct(epochs)
+
     retcode = _shllib.run_model(
         epochs,
         layers_s,
@@ -162,8 +185,10 @@ def run_model(epochs, layers, config, train_input, train_output, test_input, tes
         config,
         trainInp,
         testInp,
+        trainStats,
+        testStats,
         test_freq
     )
     if retcode != 0:
         raise Exception("Error, see message above")
-    
+    return trainStats, testStats

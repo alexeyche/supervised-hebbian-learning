@@ -48,7 +48,7 @@ net = (
         Size = layer_size,
         TauSoma = 1.0,
         TauSyn = 5.0,
-        TauMean = 100.0,
+        TauMean = 0.0,
         ApicalGain = 1.0,
         FbFactor = 0.0,
         Act = RELU,
@@ -57,6 +57,7 @@ net = (
         B = np.zeros((1, layer_size)),
         dW = np.zeros((input_size, layer_size)),
         dB = np.zeros((1, layer_size)),
+        Am = np.zeros((1, layer_size)),
         UStat = np.zeros((batch_size, seq_length, layer_size)),
         AStat = np.zeros((batch_size, seq_length, layer_size)),
         FbStat = np.zeros((batch_size, seq_length, layer_size)),
@@ -65,7 +66,7 @@ net = (
         Size = output_size,
         TauSoma = 1.0,
         TauSyn = 1.0,
-        TauMean = 100.0,
+        TauMean = 0.0,
         ApicalGain = 1.0,
         FbFactor = 0.0,
         Act = RELU,
@@ -74,6 +75,7 @@ net = (
         B = np.zeros((1, output_size)),
         dW = np.zeros((layer_size, output_size)),
         dB = np.zeros((1, output_size)),
+        Am = np.zeros((1, output_size)),
         UStat = np.zeros((batch_size, seq_length, output_size)),
         AStat = np.zeros((batch_size, seq_length, output_size)),
         FbStat = np.zeros((batch_size, seq_length, output_size)),
@@ -82,22 +84,22 @@ net = (
 
 l0, l1 = net
 
-run_model(
-    1000,
+
+trainStats, testStats = run_model(
+    200,
     net,
     c,
     x,
     y,
     xt,
     yt,
-    test_freq = 200
+    test_freq = 50
 )
 
-fbStat0 = l0.get("FbStat")
-fbStat1 = l1.get("FbStat")
-
-AStat0 = l0.get("AStat")
-AStat1 = l1.get("AStat")
-print np.mean(np.not_equal(np.argmax(AStat1[:,10,:], axis=1), np.argmax(yt,axis=1)))
-
+st = trainStats
+SquaredError = st.get("SquaredError")
+ClassificationError = st.get("ClassificationError")
+SignAgreement = st.get("SignAgreement")
+AverageActivity = st.get("AverageActivity")
+Sparsity = st.get("Sparsity")
 

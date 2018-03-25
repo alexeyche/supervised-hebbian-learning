@@ -6,19 +6,22 @@ struct TMatrixFlat;
 struct TNetConfig;
 struct TLayerConfig;
 struct TData;
+struct TStats;
 
 using ui32 = unsigned int;
 
 extern "C" {
 	
 	SHL_API int run_model(
-		ui32 epochs,
-		TLayerConfig* layerStates,
-		ui32 layersNum,
-		TNetConfig c,
-		TData trainData,
-		TData testData,
-		ui32 debugPrintFreq
+		ui32,
+		TLayerConfig*,
+		ui32,
+		TNetConfig,
+		TData,
+		TData,
+		TStats,
+		TStats,
+		ui32
 	);
 }
 
@@ -82,6 +85,14 @@ int sgn(double d) {
 		return d > 1e-10; 
 	} 
 }
+
+struct TStatsRecord {
+	double SquaredError = 0.0;
+	double ClassificationError = 0.0;
+	double SignAgreement = 0.0;
+	double AverageActivity = 0.0;
+	double Sparsity = 0.0;
+};
 
 
 ////////////////////////////////////
@@ -152,21 +163,29 @@ enum EGradientProcessing {
 	EGP_HEBB = 3
 };
 
-void NoGradientProcessing(TMatrix a, TMatrix* de) {}
+void NoGradientProcessing(TMatrix a, TMatrix* de, TStatsRecord* stat) {
+	stat->SignAgreement += 1.0;
+}
 
-void LocalLtdGradientProcessing(TMatrix a, TMatrix* de) {
+void LocalLtdGradientProcessing(TMatrix a, TMatrix* de, TStatsRecord* stat) {
+	ui32 signAgreement = 0;
 	for (ui32 i=0; i<de->rows(); ++i) {
 		for (ui32 j=0; j<de->cols(); ++j) {
+			float origValue = (*de)(i, j);
 			if ((*de)(i, j) < 0.0) {
 				(*de)(i, j) = - a(i, j);
 			}
+			signAgreement += sgn(origValue) == sgn((*de)(i, j));
 		}
 	}
+	stat->SignAgreement += signAgreement / (de->rows() * de->cols());
 }
 
-void NonLinearGradientProcessing(TMatrix a, TMatrix* de) {
+void NonLinearGradientProcessing(TMatrix a, TMatrix* de, TStatsRecord* stat) {
+	ui32 signAgreement = 0;
 	for (ui32 i=0; i<de->rows(); ++i) {
 		for (ui32 j=0; j<de->cols(); ++j) {
+			float origValue = (*de)(i, j);
 			float& value = (*de)(i, j);
 			
 			if (value < 0.0) {
@@ -174,20 +193,28 @@ void NonLinearGradientProcessing(TMatrix a, TMatrix* de) {
 			}
 
 			value = 1.0/(1.0 + exp(-100.0*value)) - 0.5;  // Non-linear step			
-			value -= a(i, j);  // Local ltd
+			
+			if (origValue <= 0.0) {
+				value -= a(i, j);  // Local ltd	
+			}
+
+			signAgreement += sgn(origValue) == sgn(value);
 		}
 	}
+	stat->SignAgreement += signAgreement / (de->rows() * de->cols());
 }
 
 
 // TODO: 
 // - gain for A mean
 // - adaptation
-void HebbGradientProcessing(TMatrix a, TMatrix* de) {
+void HebbGradientProcessing(TMatrix a, TMatrix* de, TStatsRecord* stat) {
 	double aMean = a.mean();
+	ui32 signAgreement = 0;
 
 	for (ui32 i=0; i<de->rows(); ++i) {
 		for (ui32 j=0; j<de->cols(); ++j) {
+			float origValue = (*de)(i, j);
 			float& value = (*de)(i, j);
 			
 			if (value < 0.0) {
@@ -196,9 +223,12 @@ void HebbGradientProcessing(TMatrix a, TMatrix* de) {
 			value = 1.0/(1.0 + exp(-100.0*value)) - 0.5;  // Non-linear step			
 			value *= 10.0;
 			value += a(i, j);
-			value *= sgn(value - aMean);
+			value *= sgn(value - 3.0*aMean);
+
+			signAgreement += sgn(origValue) == sgn(value);
 		}
 	}
+	stat->SignAgreement += signAgreement / (de->rows() * de->cols());
 }
 
 ////////////////////////////////////
@@ -260,10 +290,12 @@ struct TLayerConfig {
 	TMatrixFlat B;
 	TMatrixFlat dW;
 	TMatrixFlat dB;
+	TMatrixFlat Am;
 	TMatrixFlat UStat; 
 	TMatrixFlat AStat; 
 	TMatrixFlat FbStat;
 };
+
 
 
 struct TLayer {
@@ -280,6 +312,7 @@ struct TLayer {
 		, B(TMatrixFlat::ToEigen(s.B))
 		, dW(TMatrix::Zero(InputSize, LayerSize))
 		, dB(TMatrix::Zero(1, LayerSize))
+		, Am(TMatrixFlat::ToEigen(s.Am))
 		, WLearning(TLearningRule(W))
 		, BLearning(TLearningRule(B))
 	{
@@ -322,6 +355,7 @@ struct TLayer {
 		TMatrixFlat::FromEigen(B, &s.B);
 		TMatrixFlat::FromEigen(dW, &s.dW);
 		TMatrixFlat::FromEigen(dB, &s.dB);
+		TMatrixFlat::FromEigen(Am, &s.Am);
 	}
 
 	void Reset() {
@@ -334,12 +368,13 @@ struct TLayer {
 	auto& Run(ui32 t, TMatrix ff, TMatrix fb, bool collectStats) {
 		Syn += c.Dt * (ff - Syn) / s.TauSyn;
 		
-		GradProc(A, &fb);
+		// GradProc(A, &fb);
 
 		TMatrix dU = Syn * W + s.FbFactor * fb - U;			
 
 		U += c.Dt * dU / s.TauSoma;
-		A = Act(U);
+		
+		A = Act(U); //.rowwise()) - 10.0*Am.row(0));
 
 		if (collectStats) {
 			UStat.block(0, t*LayerSize, BatchSize, LayerSize) = U;
@@ -348,6 +383,10 @@ struct TLayer {
 		}
 		
 		if (learn) {
+			if (s.TauMean > 1e-10) {
+				Am += (A.colwise().mean() - Am) / s.TauMean;	
+			}
+
 			dW += Syn.transpose() * fb;
 			dB += fb.colwise().mean();
 		}
@@ -370,7 +409,7 @@ struct TLayer {
 	std::function<TMatrix(TMatrix)> Act;
 	std::function<TMatrix(TMatrix)> ActDeriv;
 	
-	std::function<void(TMatrix, TMatrix*)> GradProc;
+	std::function<void(TMatrix, TMatrix*, TStatsRecord*)> GradProc;
 
 	TMatrix Syn;
 	TMatrix U;
@@ -385,14 +424,11 @@ struct TLayer {
 
 	TMatrix dW;
 	TMatrix dB;
+
+	TMatrix Am;
 	
 	TLearningRule WLearning;
 	TLearningRule BLearning;
-};
-
-struct TStats {
-	double SquaredError = 0.0;
-	double ClassificationError = 0.0;
 };
 
 struct TNet {
@@ -413,7 +449,7 @@ struct TNet {
 
 	
 	template <bool learn = true>
-	void RunOverBatch(TData data, ui32 batchIdx, TStats* stats, bool collectStats = false) {
+	void RunOverBatch(TData data, ui32 batchIdx, TStatsRecord* stats, bool collectStats = false) {
 		TMatrix deSeq = TMatrix::Zero(c.BatchSize, OutputSize*c.SeqLength);
 		
 		TMatrix yMeanStat = TMatrix::Zero(c.BatchSize, OutputSize*c.SeqLength);
@@ -425,6 +461,8 @@ struct TNet {
 		
 		TMatrix yAcc = TMatrix::Zero(c.BatchSize, OutputSize);
 		TMatrix aAcc = TMatrix::Zero(c.BatchSize, OutputSize);
+		
+		
 
 		for (ui32 t=0; t < c.SeqLength; ++t) {	
 			TMatrix x = data.ReadInput(batchIdx, t);
@@ -433,7 +471,7 @@ struct TNet {
 				deSeq.block(0, t*OutputSize, c.BatchSize, OutputSize);
 
 			std::vector<TMatrix> feedback(Layers.size());
-			
+
 			for (int li=Layers.size()-1; li>=0; --li) {
 				if (li == Layers.size()-1) {
 					feedback[li] = deFeedback;
@@ -441,12 +479,25 @@ struct TNet {
 					TMatrix a0Deriv = Layers[li].ActDeriv(Layers[li].U);
 					feedback[li] = \
 						a0Deriv.array() * (feedback[li+1] * Layers[li+1].W.transpose()).array();
+					Layers[li].GradProc(Layers[li].A, &feedback[li], stats);
 				}
+				
 			}
 
 			TMatrix current;
 			for (ui32 li=0; li < Layers.size(); ++li) {
 				current = Layers[li].Run<learn>(t, li==0? x : current, feedback[li], collectStats);
+				
+				if (li < Layers.size()-1) {
+					stats->AverageActivity += current.mean();
+
+					stats->Sparsity += current.unaryExpr([](double v) {
+						if (std::fabs(v) < 1e-10) {
+							return 1.0;
+						}
+						return 0.0;
+					}).mean();
+				}
 			}
 			
 			yMean += c.Dt * (y - yMean / c.OutputTau);
@@ -460,11 +511,11 @@ struct TNet {
 			if (collectStats) {
 				yMeanStat.block(0, t*OutputSize, c.BatchSize, OutputSize) = yMean;
 			}
-			
+
 			yAcc += y;
 			aAcc += current;
 		}
-
+		
 		for (ui32 bi=0; bi < c.BatchSize; ++bi) {
 			Eigen::MatrixXf::Index yMaxCol;
 			yAcc.row(bi).maxCoeff(&yMaxCol);
@@ -494,6 +545,21 @@ struct TNet {
 	std::vector<TLayer> Layers;
 };
 
+struct TStats {
+	TMatrixFlat SquaredError;
+	TMatrixFlat ClassificationError;
+	TMatrixFlat SignAgreement;
+	TMatrixFlat AverageActivity;
+	TMatrixFlat Sparsity;
+
+	void WriteStats(TStatsRecord rec, ui32 epoch, ui32 numBatches, ui32 seqLength) {
+		SquaredError.Data[epoch] = rec.SquaredError / numBatches;
+		ClassificationError.Data[epoch] = rec.ClassificationError / numBatches;
+		SignAgreement.Data[epoch] = rec.SignAgreement / numBatches / seqLength;
+		AverageActivity.Data[epoch] = rec.AverageActivity / numBatches / seqLength;
+		Sparsity.Data[epoch] = rec.Sparsity / numBatches / seqLength;
+	}
+};
 
 int run_model(
 	ui32 epochs,
@@ -502,6 +568,8 @@ int run_model(
 	TNetConfig c,
 	TData trainData,
 	TData testData,
+	TStats trainStats,
+	TStats testStats,
 	ui32 testFreq
 ) {
 	try {
@@ -518,30 +586,34 @@ int run_model(
 		clock_t beginTime = clock();
 		for (ui32 e=0; e<epochs; ++e) {
 
-			TStats trainStats;
+			TStatsRecord trainStatsRec;
 
 			for (ui32 bi = 0; bi < trainNumBatches; ++bi) {
-				net.RunOverBatch(trainData, bi, &trainStats);
+				net.RunOverBatch(trainData, bi, &trainStatsRec);
 			}
 
 			net.ApplyGradients();
 
+			trainStats.WriteStats(trainStatsRec, e, trainNumBatches, c.SeqLength);
+
 			if ((e == 0) || (e % testFreq == 0) || (e == (epochs-1))) {
-				TStats testStats;
+				TStatsRecord testStatsRec;
 				for (ui32 bi = 0; bi < testNumBatches; ++bi) {
 					net.RunOverBatch</*learn*/false>(
 						testData, 
 						bi, 
-						&testStats, 
+						&testStatsRec, 
 						/*collectStats*/bi == testNumBatches-1
 					);
 				}
 
+				testStats.WriteStats(testStatsRec, e, testNumBatches, c.SeqLength);
+
 				std::cout << "Epoch: " << e << ", " << 1000.0 * float(clock() - beginTime)/ CLOCKS_PER_SEC << "ms\n";
-				std::cout << "\tTrain; sq.error: " << trainStats.SquaredError / trainNumBatches;
-				std::cout << " class.error: " << trainStats.ClassificationError / trainNumBatches << "\n"; 
-				std::cout << "\tTest; sq.error: " << testStats.SquaredError / testNumBatches;
-				std::cout << " class.error: " << testStats.ClassificationError / testNumBatches << "\n";
+				std::cout << "\tTrain; sq.error: " << trainStatsRec.SquaredError / trainNumBatches;
+				std::cout << " class.error: " << trainStatsRec.ClassificationError / trainNumBatches << "\n"; 
+				std::cout << "\tTest; sq.error: " << testStatsRec.SquaredError / testNumBatches;
+				std::cout << " class.error: " << testStatsRec.ClassificationError / testNumBatches << "\n";
 				beginTime = clock();
 			}
 		}
