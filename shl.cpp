@@ -121,14 +121,50 @@ TMatrix Sigmoid(TMatrix x) {
 }
 
 ////////////////////////////////////
+// Layer-wise configuration
+////////////////////////////////////
+
+enum EGradientProcessing {
+	EGP_NO_GRADIENT_PROCESSING = 0,
+	EGP_LOCAL_LTD = 1,
+	EGP_NONLINEAR = 2,
+	EGP_HEBB = 3
+};
+
+
+struct TLayerConfig {
+	ui32 Size;
+	double TauSoma;
+	double TauSyn;
+ 	double TauMean;
+ 	double ApicalGain;
+ 	double FbFactor;
+ 	double TauGrad;
+ 	double LearningRate;
+ 	EActivation Act;
+ 	EGradientProcessing GradProc;
+
+	TMatrixFlat W;
+	TMatrixFlat B;
+	TMatrixFlat dW;
+	TMatrixFlat dB;
+	TMatrixFlat Am;
+	TMatrixFlat UStat; 
+	TMatrixFlat AStat; 
+	TMatrixFlat FbStat;
+};
+
+
+
+////////////////////////////////////
 // Learning rules
 ////////////////////////////////////
 
 struct TSGDLearningRule {
 	TSGDLearningRule(TMatrix param) {}
 
-	void Update(TMatrix* param, TMatrix* dparam, double learningRate) {
-		*param += learningRate * (*dparam);
+	void Update(TMatrix* param, TMatrix* dparam, TLayerConfig c) {
+		*param += c.LearningRate * (*dparam);
 		dparam->setZero();
 	}
 };
@@ -139,10 +175,10 @@ struct TAdadeltaLearningRule {
 		AverageGradient = TMatrix::Zero(param.rows(), param.cols());
 	}
 
-	void Update(TMatrix* param, TMatrix* dparam, double learningRate) {
-		AverageGradient += (dparam->array().square().matrix() - AverageGradient) / 1000.0;
+	void Update(TMatrix* param, TMatrix* dparam, TLayerConfig c) {
+		AverageGradient += (dparam->array().square().matrix() - AverageGradient) / c.TauGrad;
 		
-		*param += learningRate * (dparam->array() / (AverageGradient.array().sqrt() + 1e-05)).matrix();
+		*param += c.LearningRate * (dparam->array() / (AverageGradient.array().sqrt() + 1e-05)).matrix();
 
 		dparam->setZero();
 	}
@@ -156,12 +192,6 @@ struct TAdadeltaLearningRule {
 // Gradient processing
 ////////////////////////////////////
 
-enum EGradientProcessing {
-	EGP_NO_GRADIENT_PROCESSING = 0,
-	EGP_LOCAL_LTD = 1,
-	EGP_NONLINEAR = 2,
-	EGP_HEBB = 3
-};
 
 void NoGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat) {
 	stat->SignAgreement += 1.0;
@@ -198,21 +228,13 @@ void NonLinearGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecor
 				value -= a(i, j);  // Local ltd	
 			}
 			
-			if ((origValue > 1e-10) && (value > 1e-10)) {
-				signAgreement += 1.0;	
-			}
-			if ((origValue < -1e-10) && (value < -1e-10)) {
-				signAgreement += 1.0;	
-			}
+			signAgreement += sgn(origValue) == sgn(value);
 		}
 	}
-	stat->SignAgreement += signAgreement / (de->rows() * de->cols());
+	stat->SignAgreement += static_cast<double>(signAgreement) / (de->rows() * de->cols());
 }
 
 
-// TODO: 
-// - gain for A mean
-// - adaptation
 void HebbGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat) {
 	ui32 signAgreement = 0;
 
@@ -229,16 +251,10 @@ void HebbGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* st
 			value += a(i, j);
 			value *= sgn(value - am(0, j));
 
-			// signAgreement += sgn(origValue) == sgn(value);
-			if ((origValue > 1e-10) && (value > 1e-10)) {
-				signAgreement += 1.0;
-			} else
-			if ((origValue < -1e-10) && (value < -1e-10)) {
-				signAgreement += 1.0;	
-			}
+			signAgreement += sgn(origValue) == sgn(value);
 		}
 	}
-	stat->SignAgreement += signAgreement / (de->rows() * de->cols());
+	stat->SignAgreement += static_cast<double>(signAgreement) / (de->rows() * de->cols());
 }
 
 ////////////////////////////////////
@@ -249,7 +265,6 @@ struct TNetConfig {
 	double Dt;
 	ui32 SeqLength;
 	ui32 BatchSize;
- 	double LearningRate;
  	ui32 FeedbackDelay;
  	double OutputTau;
 
@@ -285,26 +300,6 @@ struct TData {
 	}
 };
 
-
-struct TLayerConfig {
-	ui32 Size;
-	double TauSoma;
-	double TauSyn;
- 	double TauMean;
- 	double ApicalGain;
- 	double FbFactor;
- 	EActivation Act;
- 	EGradientProcessing GradProc;
-
-	TMatrixFlat W;
-	TMatrixFlat B;
-	TMatrixFlat dW;
-	TMatrixFlat dB;
-	TMatrixFlat Am;
-	TMatrixFlat UStat; 
-	TMatrixFlat AStat; 
-	TMatrixFlat FbStat;
-};
 
 
 
@@ -384,7 +379,7 @@ struct TLayer {
 
 		U += c.Dt * dU / s.TauSoma;
 		
-		A = Act(U); //.rowwise()) - 10.0*Am.row(0));
+		A = Act(U.rowwise() - Am.row(0));
 
 		if (collectStats) {
 			UStat.block(0, t*LayerSize, BatchSize, LayerSize) = U;
@@ -394,8 +389,8 @@ struct TLayer {
 		
 		if (learn) {
 			if (s.TauMean > 1e-10) {
-				Am += c.Dt * (s.ApicalGain * A.colwise().mean() - Am / s.TauMean);
-				// Am += c.Dt * (A.colwise().mean() - Am) / s.TauMean;
+				// Am += c.Dt * (s.ApicalGain * A.colwise().mean() - Am / s.TauMean);
+				Am += c.Dt * (s.ApicalGain * A.colwise().mean() - Am) / s.TauMean;
 			}
 
 			dW += Syn.transpose() * fb;
@@ -406,8 +401,8 @@ struct TLayer {
 	}
 
 	void ApplyGradients() {
-		WLearning.Update(&W, &dW, c.LearningRate);
-		BLearning.Update(&B, &dB, c.LearningRate);
+		WLearning.Update(&W, &dW, s);
+		BLearning.Update(&B, &dB, s);
 	}
 
 	ui32 BatchSize;

@@ -37,7 +37,6 @@ c = NetConfig(
     Dt = 1.0,
     SeqLength=seq_length,
     BatchSize=batch_size,
-    LearningRate=0.001,
     FeedbackDelay=1,
     OutputTau=5.0,
     DeStat = np.zeros((batch_size, seq_length, output_size)),
@@ -49,9 +48,11 @@ net = (
         Size = layer_size,
         TauSoma = 1.0,
         TauSyn = 5.0,
-        TauMean = 100.0,
+        TauMean = 500.0,
         ApicalGain = 1.0,
         FbFactor = 0.0,
+        TauGrad = 100.0,
+        LearningRate=0.01,
         Act = RELU,
         GradProc = HEBB,
         W = xavier_init(input_size, layer_size),
@@ -70,6 +71,8 @@ net = (
         TauMean = 0.0,
         ApicalGain = 1.0,
         FbFactor = 0.0,
+        TauGrad = 10.0,
+        LearningRate=0.0,
         Act = RELU,
         GradProc = NO_GRADIENT_PROCESSING,
         W = xavier_init(layer_size, output_size),
@@ -85,25 +88,29 @@ net = (
 
 
 trainStats, testStats = run_model(
-    1,
+    400,
     net,
     c,
     x,
     y,
     xt,
     yt,
-    test_freq = 1
+    test_freq = 50
 )
 
 
 l0 = net[0]
 l1 = net[1]
 
-de = np.dot(l1.get("W"), l1.get("FbStat")[:,11].T) * Relu().deriv(l0.get("AStat")[:,11]).T
-den = l0.get("FbStat")[:,11].T
-shl(de[0], den[0]/15.0)
+# dd = np.zeros((50,))
+# for i in xrange(50):
+#     de = np.dot(l1.get("W"), l1.get("FbStat")[:,i].T) * Relu().deriv(l0.get("AStat")[:,i]).T
+#     den = l0.get("FbStat")[:,i].T
 
-print np.mean(np.equal(np.sign(den), np.sign(de)))
+#     dd[i] = np.mean(np.equal(np.sign(den), np.sign(de)))
+
+
+# shl(de[0], den[0]/15.0)
 
 st = trainStats
 SquaredError = st.get("SquaredError")
@@ -112,3 +119,4 @@ SignAgreement = st.get("SignAgreement")
 AverageActivity = st.get("AverageActivity")
 Sparsity = st.get("Sparsity")
 
+shl(l0.get("AStat")[0,:])
