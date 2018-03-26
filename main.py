@@ -8,7 +8,7 @@ from datasets import *
 from sklearn.metrics import log_loss
 from poc.common import Relu
 
-np.random.seed(10)
+np.random.seed(11)
 
 def xavier_init(fan_in, fan_out, const=1.0):
     low = -const * np.sqrt(6.0 / (fan_in + fan_out))
@@ -72,7 +72,7 @@ net = (
         ApicalGain = 1.0,
         FbFactor = 0.0,
         TauGrad = 10.0,
-        LearningRate=0.0,
+        LearningRate=0.0001,
         Act = RELU,
         GradProc = NO_GRADIENT_PROCESSING,
         W = xavier_init(layer_size, output_size),
