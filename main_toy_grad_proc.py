@@ -30,14 +30,14 @@ xt, yt = ds.test_data
 
 _, input_size, _, output_size = x.shape + y.shape
 batch_size = 40
-seq_length = 60
+seq_length = 50
 layer_size = 45
 
 c = NetConfig(
     Dt = 1.0,
     SeqLength=seq_length,
     BatchSize=batch_size,
-    FeedbackDelay=15,
+    FeedbackDelay=1,
     OutputTau=5.0,
     DeStat = np.zeros((batch_size, seq_length, output_size)),
     YMeanStat = np.zeros((batch_size, seq_length, output_size))
@@ -47,16 +47,15 @@ net = (
     LayerConfig(
         Size = layer_size,
         TauSoma = 1.0,
-        TauSyn = 15.0,
-        TauSynFb = 15.0,
-        TauMean = 1000.0,
-        ApicalGain = 10.0,
+        TauSyn = 5.0,
+        TauMean = 500.0,
+        ApicalGain = 1.0,
         FbFactor = 0.0,
         TauGrad = 100.0,
-        LearningRate=0.001,
+        LearningRate=0.01,
         Act = RELU,
-        GradProc = NO_GRADIENT_PROCESSING,
-        W = 10.0*xavier_init(input_size, layer_size),
+        GradProc = HEBB,
+        W = xavier_init(input_size, layer_size),
         B = np.zeros((1, layer_size)),
         dW = np.zeros((input_size, layer_size)),
         dB = np.zeros((1, layer_size)),
@@ -64,18 +63,16 @@ net = (
         UStat = np.zeros((batch_size, seq_length, layer_size)),
         AStat = np.zeros((batch_size, seq_length, layer_size)),
         FbStat = np.zeros((batch_size, seq_length, layer_size)),
-        SynStat = np.zeros((batch_size, seq_length, input_size)),
     ),
     LayerConfig(
         Size = output_size,
         TauSoma = 1.0,
-        TauSyn = 2.0,
-        TauSynFb = 15.0,
+        TauSyn = 1.0,
         TauMean = 0.0,
         ApicalGain = 1.0,
         FbFactor = 0.0,
         TauGrad = 10.0,
-        LearningRate=0.001,
+        LearningRate=0.0001,
         Act = RELU,
         GradProc = NO_GRADIENT_PROCESSING,
         W = xavier_init(layer_size, output_size),
@@ -86,72 +83,34 @@ net = (
         UStat = np.zeros((batch_size, seq_length, output_size)),
         AStat = np.zeros((batch_size, seq_length, output_size)),
         FbStat = np.zeros((batch_size, seq_length, output_size)),
-        SynStat = np.zeros((batch_size, seq_length, layer_size)),
     ),
 )
 
 
-# TODO:
-# Let's make feedback pathway being controlled by the outside
-# So target 
+trainStats, testStats = run_model(
+    400,
+    net,
+    c,
+    x,
+    y,
+    xt,
+    yt,
+    test_freq = 50
+)
 
-for e in xrange(1):
-    trainStats, testStats = run_model(
-        1,
-        net,
-        c,
-        x,
-        y,
-        xt,
-        yt,
-        test_freq = 100
-    )
 
-    l0 = net[0]
-    l1 = net[1]
-
-    # x_m = np.mean(np.mean(l0.get("SynStat"),0),0)
-    # y_m = np.mean(np.mean(l0.get("AStat"), 0), 0)
-
-    # dUorig = l0.get("FbStat")
-
-    # dUhebb = np.transpose([
-    #     l0.get("AStat")[:, i] * np.sign(y_m - np.mean(y_m))
-    #     for i in xrange(seq_length)
-    # ], (1,0,2))
-
-    # dU = dUhebb
-
-    # # ??
-
-    # dW = np.mean([
-    #     np.dot(
-    #         l0.get("SynStat")[:,i].T,
-    #         dU[:, i]
-    #     )
-    #     for i in xrange(seq_length)
-    # ], 0)
-
-    # de_fake = y_m * np.sign(y_m - np.mean(y_m))
-
-    # dW = 100.0 * np.outer(x_m, de)
-    # l0.set("W", l0.get("W") + 0.1*dW)
-
-    
-# shl(dUorig[0,:,1], dUhebb[0,:,1])
-
-# shl(y_m * np.sign(y_m - np.mean(y_m)), np.mean(np.mean(l0.get("FbStat"),0), 0))
+l0 = net[0]
+l1 = net[1]
 
 # dd = np.zeros((50,))
 # for i in xrange(50):
-#     de = 
-#     if i < 49:
-#         den = l0.get("FbStat")[:,i+1].T
+#     de = np.dot(l1.get("W"), l1.get("FbStat")[:,i].T) * Relu().deriv(l0.get("AStat")[:,i]).T
+#     den = l0.get("FbStat")[:,i].T
 
 #     dd[i] = np.mean(np.equal(np.sign(den), np.sign(de)))
 
 
-# shl(de[0], den[0], labels=["Orig", "Hebb"])
+# shl(de[0], den[0]/15.0)
 
 st = trainStats
 SquaredError = st.get("SquaredError")

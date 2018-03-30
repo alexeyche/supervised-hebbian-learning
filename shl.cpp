@@ -48,6 +48,7 @@ extern "C" {
 
 
 using TMatrix = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+using TArray = Eigen::Array<float, Eigen::Dynamic, Eigen::Dynamic>;
 
 #define CheckSizeMatch(m, mf) \
 	ENSURE(m.rows() == mf.NRows,  \
@@ -78,7 +79,7 @@ struct TMatrixFlat {
   	}
 };
 
-int sgn(double d) { 
+int sgn(float d) { 
 	if (d < -1e-10) { 
 		return -1; 
 	} else { 
@@ -128,7 +129,8 @@ enum EGradientProcessing {
 	EGP_NO_GRADIENT_PROCESSING = 0,
 	EGP_LOCAL_LTD = 1,
 	EGP_NONLINEAR = 2,
-	EGP_HEBB = 3
+	EGP_HEBB = 3,
+	EGP_ACTIVE_HEBB = 4 
 };
 
 
@@ -136,6 +138,7 @@ struct TLayerConfig {
 	ui32 Size;
 	double TauSoma;
 	double TauSyn;
+	double TauSynFb;
  	double TauMean;
  	double ApicalGain;
  	double FbFactor;
@@ -152,6 +155,7 @@ struct TLayerConfig {
 	TMatrixFlat UStat; 
 	TMatrixFlat AStat; 
 	TMatrixFlat FbStat;
+	TMatrixFlat SynStat;
 };
 
 
@@ -193,11 +197,13 @@ struct TAdadeltaLearningRule {
 ////////////////////////////////////
 
 
-void NoGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat) {
-	stat->SignAgreement += 1.0;
+void NoGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat, bool monitorStats) {
+	if (monitorStats) {
+		stat->SignAgreement += 1.0;
+	}
 }
 
-void LocalLtdGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat) {
+void LocalLtdGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat, bool monitorStats) {
 	ui32 signAgreement = 0;
 	for (ui32 i=0; i<de->rows(); ++i) {
 		for (ui32 j=0; j<de->cols(); ++j) {
@@ -208,10 +214,12 @@ void LocalLtdGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord
 			signAgreement += sgn(origValue) == sgn((*de)(i, j));
 		}
 	}
-	stat->SignAgreement += signAgreement / (de->rows() * de->cols());
+	if (monitorStats) {
+		stat->SignAgreement += static_cast<double>(signAgreement) / (de->rows() * de->cols());
+	}
 }
 
-void NonLinearGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat) {
+void NonLinearGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat, bool monitorStats) {
 	ui32 signAgreement = 0;
 	for (ui32 i=0; i<de->rows(); ++i) {
 		for (ui32 j=0; j<de->cols(); ++j) {
@@ -222,7 +230,7 @@ void NonLinearGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecor
 				value = 0.0;  // Rectification
 			}
 
-			value = 1.0/(1.0 + exp(-100.0*value)) - 0.5;  // Non-linear step			
+			value = 1.0*(1.0/(1.0 + exp(-100.0*value)) - 0.5);  // Non-linear step			
 			
 			if (origValue <= 0.0) {
 				value -= a(i, j);  // Local ltd	
@@ -231,30 +239,54 @@ void NonLinearGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecor
 			signAgreement += sgn(origValue) == sgn(value);
 		}
 	}
-	stat->SignAgreement += static_cast<double>(signAgreement) / (de->rows() * de->cols());
+	if (monitorStats) {
+		stat->SignAgreement += static_cast<double>(signAgreement) / (de->rows() * de->cols());
+	}
 }
 
 
-void HebbGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat) {
+float ProcessHebb(float value) {
+	if (value < 0.0) {
+		value = 0.0;  // Rectification
+	}
+	
+	value = 1.0 * (1.0/(1.0 + exp(-100.0*value)) - 0.5);  // Non-linear step
+
+	return value;
+}
+
+void HebbGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat, bool monitorStats) {
 	ui32 signAgreement = 0;
 
 	for (ui32 i=0; i<de->rows(); ++i) {
 		for (ui32 j=0; j<de->cols(); ++j) {
 			float origValue = (*de)(i, j);
-			float& value = (*de)(i, j);
-			
-			if (value < 0.0) {
-				value = 0.0;  // Rectification
-			}
-			
-			value = 10.0 * (1.0/(1.0 + exp(-100.0*value)) - 0.5);  // Non-linear step
+
+			float value = ProcessHebb((*de)(i, j));
 			value += a(i, j);
 			value *= sgn(value - am(0, j));
 
 			signAgreement += sgn(origValue) == sgn(value);
+
+			(*de)(i, j) = value;
 		}
 	}
-	stat->SignAgreement += static_cast<double>(signAgreement) / (de->rows() * de->cols());
+
+	if (monitorStats) {
+		stat->SignAgreement += static_cast<double>(signAgreement) / (de->rows() * de->cols());
+	}
+}
+
+void ActiveHebbGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat, bool monitorStats) {
+	for (ui32 i=0; i<de->rows(); ++i) {
+		for (ui32 j=0; j<de->cols(); ++j) {
+			float origValue = (*de)(i, j);
+
+			float value = ProcessHebb((*de)(i, j));
+
+			(*de)(i, j) = value;
+		}
+	}
 }
 
 ////////////////////////////////////
@@ -275,7 +307,7 @@ struct TNetConfig {
 using TLearningRule = TAdadeltaLearningRule;
 
 struct TData {
-	static constexpr ui32 TimeOfDataSpike = 10;
+	static constexpr ui32 TimeOfDataSpike = 5;
 
 	TMatrixFlat X;
 	TMatrixFlat Y;
@@ -313,6 +345,7 @@ struct TLayer {
 		, UStat(TMatrix::Zero(BatchSize, LayerSize*c.SeqLength))
 		, AStat(TMatrix::Zero(BatchSize, LayerSize*c.SeqLength))
 		, FbStat(TMatrix::Zero(BatchSize, LayerSize*c.SeqLength))
+		, SynStat(TMatrix::Zero(BatchSize, InputSize*c.SeqLength))
 		, W(TMatrixFlat::ToEigen(s.W))
 		, B(TMatrixFlat::ToEigen(s.B))
 		, dW(TMatrix::Zero(InputSize, LayerSize))
@@ -347,6 +380,9 @@ struct TLayer {
 		}
 		else if (s.GradProc == EGP_HEBB) {
 			GradProc = &HebbGradientProcessing;
+		}
+		else if (s.GradProc == EGP_ACTIVE_HEBB) {
+			GradProc = &ActiveHebbGradientProcessing;
 		} else {
 			ENSURE(0, "Failed to find gradient processing function #" << s.GradProc);
 		}		
@@ -356,6 +392,7 @@ struct TLayer {
 		TMatrixFlat::FromEigen(UStat, &s.UStat);
 		TMatrixFlat::FromEigen(AStat, &s.AStat);
 		TMatrixFlat::FromEigen(FbStat, &s.FbStat);
+		TMatrixFlat::FromEigen(SynStat, &s.SynStat);
 		TMatrixFlat::FromEigen(W, &s.W);
 		TMatrixFlat::FromEigen(B, &s.B);
 		TMatrixFlat::FromEigen(dW, &s.dW);
@@ -365,26 +402,35 @@ struct TLayer {
 
 	void Reset() {
 		Syn = TMatrix::Zero(BatchSize, InputSize);
+		Fb = TMatrix::Zero(BatchSize, LayerSize);
 		U = TMatrix::Zero(BatchSize, LayerSize);
 		A = TMatrix::Zero(BatchSize, LayerSize);
 	}
 
 	template <bool learn = true>
-	auto& Run(ui32 t, TMatrix ff, TMatrix fb, bool collectStats) {
+	auto& Run(ui32 t, TMatrix ff, TMatrix fb, TStatsRecord* stats, bool monitorStats, bool monitorData) {
 		Syn += c.Dt * (ff - Syn) / s.TauSyn;
-		
-		// GradProc(A, &fb);
+		Fb += c.Dt * (fb - Fb) / s.TauSynFb;
 
-		TMatrix dU = Syn * W + s.FbFactor * fb - U;			
+		TMatrix fbSnapshot = Fb;
+
+		GradProc(A, Am, &fbSnapshot, stats, monitorStats);
+
+		double fbFactor = learn ? s.FbFactor : 0.0;
+
+		TMatrix dU = Syn * W + fbFactor * fbSnapshot - U;
 
 		U += c.Dt * dU / s.TauSoma;
 		
 		A = Act(U.rowwise() - Am.row(0));
 
-		if (collectStats) {
+		if (monitorData) {
 			UStat.block(0, t*LayerSize, BatchSize, LayerSize) = U;
 			AStat.block(0, t*LayerSize, BatchSize, LayerSize) = A;
-			FbStat.block(0, t*LayerSize, BatchSize, LayerSize) = fb;
+			// if (s.GradProc != EGP_ACTIVE_HEBB) {
+				FbStat.block(0, t*LayerSize, BatchSize, LayerSize) = fbSnapshot;
+			// }
+			SynStat.block(0, t*InputSize, BatchSize, InputSize) = Syn;
 		}
 		
 		if (learn) {
@@ -393,8 +439,33 @@ struct TLayer {
 				Am += c.Dt * (s.ApicalGain * A.colwise().mean() - Am) / s.TauMean;
 			}
 
-			dW += Syn.transpose() * fb;
-			dB += fb.colwise().mean();
+			if (s.GradProc == EGP_ACTIVE_HEBB) {
+				TMatrix dUde(BatchSize, LayerSize);
+
+				ui32 signAgreement = 0;
+				for (ui32 i=0; i<BatchSize; ++i) {
+					for (ui32 j=0; j<LayerSize; ++j) {
+						float aZero = A(i, j) - Am(0, j);
+						int aZeroSign = sgn(aZero);
+						
+						dUde(i, j) = A(i, j) * aZeroSign;
+
+						signAgreement += sgn(Fb(i, j)) == sgn(dUde(i, j));
+					}
+				}
+				if (monitorStats) {
+					stats->SignAgreement += \
+						static_cast<double>(signAgreement) / (dUde.rows() * dUde.cols());					
+				}
+				// FbStat.block(0, t*LayerSize, BatchSize, LayerSize) = dUde;
+				
+				dW += Syn.transpose() * dUde;
+				dB += dUde.colwise().mean();
+				
+			} else {
+				dW += Syn.transpose() * fb;
+				dB += fb.colwise().mean();
+			}
 		}
 	
 		return A;
@@ -415,15 +486,17 @@ struct TLayer {
 	std::function<TMatrix(TMatrix)> Act;
 	std::function<TMatrix(TMatrix)> ActDeriv;
 	
-	std::function<void(TMatrix, TMatrix, TMatrix*, TStatsRecord*)> GradProc;
+	std::function<void(TMatrix, TMatrix, TMatrix*, TStatsRecord*, bool)> GradProc;
 
 	TMatrix Syn;
+	TMatrix Fb;
 	TMatrix U;
 	TMatrix A;
 	
 	TMatrix UStat;
 	TMatrix AStat;
 	TMatrix FbStat;
+	TMatrix SynStat;
 	
 	TMatrix W;
 	TMatrix B;
@@ -455,7 +528,7 @@ struct TNet {
 
 	
 	template <bool learn = true>
-	void RunOverBatch(TData data, ui32 batchIdx, TStatsRecord* stats, bool collectStats = false) {
+	void RunOverBatch(TData data, ui32 batchIdx, TStatsRecord* stats, bool monitorData = false) {
 		TMatrix deSeq = TMatrix::Zero(c.BatchSize, OutputSize*c.SeqLength);
 		
 		TMatrix yMeanStat = TMatrix::Zero(c.BatchSize, OutputSize*c.SeqLength);
@@ -487,15 +560,24 @@ struct TNet {
 					TMatrix a0Deriv = Layers[li].ActDeriv(Layers[li].U);	
 					feedback[li] = \
 						a0Deriv.array() * (feedback[li+1] * Layers[li+1].W.transpose()).array();
+						
+					// if (t > 25) {
+					// 	if (li == 0) {
+					// 		feedback.back() = TMatrix::Zero(c.BatchSize, OutputSize);
+					// 	}
+					// 	feedback[li] = TMatrix::Zero(c.BatchSize, Layers[li].LayerSize);
+					// }
 
-					Layers[li].GradProc(Layers[li].A, Layers[li].Am, &feedback[li], stats);
+					// Layers[li].GradProc(Layers[li].A, Layers[li].Am, &feedback[li], stats);
 				}
 
 				current = Layers[li].Run<learn>(
 					t, 
 					li==0? x : current, 
 					feedback[li], 
-					collectStats
+					stats,
+					/*monitorStats*/isHidden,
+					monitorData
 				);
 				
 				if (isHidden) {
@@ -514,11 +596,12 @@ struct TNet {
 
 			TMatrix de = yMean - current;
 			
-			if (t < c.SeqLength-c.FeedbackDelay) {
+			// if (t < c.SeqLength-c.FeedbackDelay) {
+			if (t == TData::TimeOfDataSpike) {
 				deSeq.block(0, (t+c.FeedbackDelay)*OutputSize, c.BatchSize, OutputSize) = de;
 			}
 
-			if (collectStats) {
+			if (monitorData) {
 				yMeanStat.block(0, t*OutputSize, c.BatchSize, OutputSize) = yMean;
 			}
 
@@ -599,21 +682,27 @@ int run_model(
 			TStatsRecord trainStatsRec;
 
 			for (ui32 bi = 0; bi < trainNumBatches; ++bi) {
-				net.RunOverBatch(trainData, bi, &trainStatsRec);
+				net.RunOverBatch(
+					trainData, 
+					bi, 
+					&trainStatsRec,
+					/*monitorData*/bi == trainNumBatches-1
+				);
 			}
 
 			net.ApplyGradients();
 
 			trainStats.WriteStats(trainStatsRec, e, trainNumBatches, c.SeqLength);
 
-			if ((e == 0) || (e % testFreq == 0) || (e == (epochs-1))) {
+			if ((e % testFreq == 0) || (e == (epochs-1))) {
+			// if ((e == 0) || (e % testFreq == 0) || (e == (epochs-1))) {
 				TStatsRecord testStatsRec;
 				for (ui32 bi = 0; bi < testNumBatches; ++bi) {
 					net.RunOverBatch</*learn*/false>(
 						testData, 
 						bi, 
-						&testStatsRec, 
-						/*collectStats*/bi == testNumBatches-1
+						&testStatsRec
+						// /*monitorData*/bi == testNumBatches-1
 					);
 				}
 

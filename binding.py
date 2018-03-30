@@ -66,7 +66,7 @@ class ComplexStructure(ct.Structure):
         if self._fields_dict[k] == MatrixFlat:
             assert isinstance(v, np.ndarray), \
                 "Expecting numpy matrix as input for field {}".format(k)
-
+            
             s = v.shape
             if len(s) == 2:
                 self._np_values_dict[k] = (
@@ -84,7 +84,7 @@ class ComplexStructure(ct.Structure):
                     v.shape
                 )
             else:
-                raise Exception("Other shapes are not supported")
+                raise Exception("Other shapes ({}) are not supported".format(s))
 
             setattr(self, k, MatrixFlat.from_np(self._np_values_dict[k][0]))
                     
@@ -116,6 +116,7 @@ class LayerConfig(ComplexStructure):
         ("Size", ct.c_uint),
         ("TauSoma", ct.c_double),
         ("TauSyn", ct.c_double),
+        ("TauSynFb", ct.c_double),
         ("TauMean", ct.c_double),
         ("ApicalGain", ct.c_double),
         ("FbFactor", ct.c_double),
@@ -131,6 +132,7 @@ class LayerConfig(ComplexStructure):
         ("UStat", MatrixFlat),
         ("AStat", MatrixFlat),
         ("FbStat", MatrixFlat),
+        ("SynStat", MatrixFlat),
     ]
 
 class Stats(ComplexStructure):
@@ -166,7 +168,7 @@ _shllib.run_model.argtypes = [
 ]
 
 RELU, SIGMOID = 0, 1
-NO_GRADIENT_PROCESSING, LOCAL_LTD, NONLINEAR, HEBB = 0, 1, 2, 3
+NO_GRADIENT_PROCESSING, LOCAL_LTD, NONLINEAR, HEBB, ACTIVE_HEBB = 0, 1, 2, 3, 4
 
 def run_model(epochs, layers, config, train_input, train_output, test_input, test_output, test_freq=1):
     layers_s = (LayerConfig * len(layers))()
