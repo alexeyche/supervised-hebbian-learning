@@ -7,6 +7,7 @@ from util import *
 from datasets import *
 from sklearn.metrics import log_loss
 from poc.common import Relu
+from poc.opt import *
 
 np.random.seed(11)
 
@@ -48,15 +49,15 @@ net = (
         Size = layer_size,
         TauSoma = 1.0,
         TauSyn = 15.0,
-        TauSynFb = 15.0,
-        TauMean = 1000.0,
-        ApicalGain = 10.0,
-        FbFactor = 0.0,
+        TauSynFb = 5.0,
+        TauMean = 100.0,
+        ApicalGain = 1.0,
+        FbFactor = 1.0,
         TauGrad = 100.0,
         LearningRate=0.001,
         Act = RELU,
-        GradProc = NO_GRADIENT_PROCESSING,
-        W = 10.0*xavier_init(input_size, layer_size),
+        GradProc = ACTIVE_HEBB,
+        W = xavier_init(input_size, layer_size),
         B = np.zeros((1, layer_size)),
         dW = np.zeros((input_size, layer_size)),
         dB = np.zeros((1, layer_size)),
@@ -69,12 +70,12 @@ net = (
     LayerConfig(
         Size = output_size,
         TauSoma = 1.0,
-        TauSyn = 2.0,
+        TauSyn = 1.0,
         TauSynFb = 15.0,
         TauMean = 0.0,
         ApicalGain = 1.0,
         FbFactor = 0.0,
-        TauGrad = 10.0,
+        TauGrad = 100.0,
         LearningRate=0.001,
         Act = RELU,
         GradProc = NO_GRADIENT_PROCESSING,
@@ -90,27 +91,24 @@ net = (
     ),
 )
 
+l0 = net[0]
+l1 = net[1]
 
-# TODO:
-# Let's make feedback pathway being controlled by the outside
-# So target 
 
 for e in xrange(1):
     trainStats, testStats = run_model(
-        1,
+        300,
         net,
         c,
         x,
         y,
         xt,
         yt,
-        test_freq = 100
+        test_freq = 10
     )
 
-    l0 = net[0]
-    l1 = net[1]
 
-    # x_m = np.mean(np.mean(l0.get("SynStat"),0),0)
+    # # x_m = np.mean(np.mean(l0.get("SynStat"),0),0)
     # y_m = np.mean(np.mean(l0.get("AStat"), 0), 0)
 
     # dUorig = l0.get("FbStat")
@@ -119,10 +117,16 @@ for e in xrange(1):
     #     l0.get("AStat")[:, i] * np.sign(y_m - np.mean(y_m))
     #     for i in xrange(seq_length)
     # ], (1,0,2))
+    
+    # # shl(np.mean(np.mean(dUhebb, 1),0), np.mean(np.mean(dUorig, 1), 0))
+    # sa.append(
+    #     np.mean(
+    #         np.sign(np.mean(np.mean(dUhebb, 1),0)) == 
+    #         np.sign(np.mean(np.mean(dUorig, 1),0))
+    #     )
+    # )
 
     # dU = dUhebb
-
-    # # ??
 
     # dW = np.mean([
     #     np.dot(
@@ -135,7 +139,8 @@ for e in xrange(1):
     # de_fake = y_m * np.sign(y_m - np.mean(y_m))
 
     # dW = 100.0 * np.outer(x_m, de)
-    # l0.set("W", l0.get("W") + 0.1*dW)
+    # opt.update(-dW)
+    # l0.set("W", opt.params[0])
 
     
 # shl(dUorig[0,:,1], dUhebb[0,:,1])

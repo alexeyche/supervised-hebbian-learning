@@ -102,11 +102,12 @@ struct TStatsRecord {
 
 enum EActivation {
 	EA_RELU = 0,
-	EA_SIGMOID = 1
+	EA_SIGMOID = 1,
+	EA_TANH = 2
 };
 
 TMatrix Relu(TMatrix x) {
-	return x.array().cwiseMax(0.0); //.cwiseMin(1.0);
+	return x.array().cwiseMax(0.0).cwiseMin(5.0);
 }
 
 TMatrix ReluDeriv(TMatrix x) {
@@ -250,7 +251,7 @@ float ProcessHebb(float value) {
 		value = 0.0;  // Rectification
 	}
 	
-	value = 1.0 * (1.0/(1.0 + exp(-100.0*value)) - 0.5);  // Non-linear step
+	// value = 2.0 * (1.0/(1.0 + exp(-100.0*value)) - 0.5);  // Non-linear step
 
 	return value;
 }
@@ -410,7 +411,7 @@ struct TLayer {
 	template <bool learn = true>
 	auto& Run(ui32 t, TMatrix ff, TMatrix fb, TStatsRecord* stats, bool monitorStats, bool monitorData) {
 		Syn += c.Dt * (ff - Syn) / s.TauSyn;
-		Fb += c.Dt * (fb - Fb) / s.TauSynFb;
+		Fb += c.Dt * (fb - Fb / s.TauSynFb);
 
 		TMatrix fbSnapshot = Fb;
 
@@ -428,7 +429,7 @@ struct TLayer {
 			UStat.block(0, t*LayerSize, BatchSize, LayerSize) = U;
 			AStat.block(0, t*LayerSize, BatchSize, LayerSize) = A;
 			// if (s.GradProc != EGP_ACTIVE_HEBB) {
-				FbStat.block(0, t*LayerSize, BatchSize, LayerSize) = fbSnapshot;
+				FbStat.block(0, t*LayerSize, BatchSize, LayerSize) = fb;
 			// }
 			SynStat.block(0, t*InputSize, BatchSize, InputSize) = Syn;
 		}
