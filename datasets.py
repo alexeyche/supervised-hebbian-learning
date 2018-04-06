@@ -288,4 +288,11 @@ class XorDataset(Dataset):
     def task_type(self):
         return TaskType.REGRESSION
 
+    @property
+    def train_data(self):        
+        return self._x_v, self._y_v
+    
+    @property
+    def test_data(self):        
+        return self._x_v, self._y_v
 

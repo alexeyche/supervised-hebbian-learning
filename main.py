@@ -9,7 +9,7 @@ from sklearn.metrics import log_loss
 from poc.common import Relu
 from poc.opt import *
 
-np.random.seed(11)
+np.random.seed(12)
 
 def xavier_init(fan_in, fan_out, const=1.0):
     low = -const * np.sqrt(6.0 / (fan_in + fan_out))
@@ -52,9 +52,9 @@ net = (
         TauSynFb = 5.0,
         TauMean = 100.0,
         ApicalGain = 1.0,
-        FbFactor = 1.0,
-        TauGrad = 100.0,
-        LearningRate=0.001,
+        FbFactor = 10.0,
+        TauGrad = 1000.0,
+        LearningRate=0.005,
         Act = RELU,
         GradProc = ACTIVE_HEBB,
         W = xavier_init(input_size, layer_size),
@@ -75,8 +75,8 @@ net = (
         TauMean = 0.0,
         ApicalGain = 1.0,
         FbFactor = 0.0,
-        TauGrad = 100.0,
-        LearningRate=0.001,
+        TauGrad = 10.0,
+        LearningRate=0.002,
         Act = RELU,
         GradProc = NO_GRADIENT_PROCESSING,
         W = xavier_init(layer_size, output_size),
@@ -94,10 +94,13 @@ net = (
 l0 = net[0]
 l1 = net[1]
 
+sa = []
+opt = AdamOpt((1.0,))
+opt.init(l0.get("W"))
 
-for e in xrange(1):
+for e in xrange(100):
     trainStats, testStats = run_model(
-        300,
+        1,
         net,
         c,
         x,
@@ -109,38 +112,35 @@ for e in xrange(1):
 
 
     # # x_m = np.mean(np.mean(l0.get("SynStat"),0),0)
-    # y_m = np.mean(np.mean(l0.get("AStat"), 0), 0)
+    y_m = np.mean(np.mean(l0.get("AStat"), 0), 0)
 
-    # dUorig = l0.get("FbStat")
+    dUorig = l0.get("FbStat")
 
-    # dUhebb = np.transpose([
-    #     l0.get("AStat")[:, i] * np.sign(y_m - np.mean(y_m))
-    #     for i in xrange(seq_length)
-    # ], (1,0,2))
+    dUhebb = np.transpose([
+        l0.get("AStat")[:, i] * np.sign(y_m - np.mean(y_m))
+        for i in xrange(seq_length)
+    ], (1,0,2))
     
-    # # shl(np.mean(np.mean(dUhebb, 1),0), np.mean(np.mean(dUorig, 1), 0))
-    # sa.append(
-    #     np.mean(
-    #         np.sign(np.mean(np.mean(dUhebb, 1),0)) == 
-    #         np.sign(np.mean(np.mean(dUorig, 1),0))
-    #     )
-    # )
+    # shl(np.mean(np.mean(dUhebb, 1),0), np.mean(np.mean(dUorig, 1), 0))
+    sa.append(
+        np.mean(
+            np.sign(np.mean(np.mean(dUhebb, 1),0)) == 
+            np.sign(np.mean(np.mean(dUorig, 1),0))
+        )
+    )
 
-    # dU = dUhebb
+    dU = dUhebb
 
-    # dW = np.mean([
-    #     np.dot(
-    #         l0.get("SynStat")[:,i].T,
-    #         dU[:, i]
-    #     )
-    #     for i in xrange(seq_length)
-    # ], 0)
+    dW = np.mean([
+        np.dot(
+            l0.get("SynStat")[:,i].T,
+            dU[:, i]
+        )
+        for i in xrange(seq_length)
+    ], 0)
 
-    # de_fake = y_m * np.sign(y_m - np.mean(y_m))
-
-    # dW = 100.0 * np.outer(x_m, de)
-    # opt.update(-dW)
-    # l0.set("W", opt.params[0])
+    opt.update(-dW)
+    l0.set("W", opt.params[0])
 
     
 # shl(dUorig[0,:,1], dUhebb[0,:,1])
@@ -165,4 +165,4 @@ SignAgreement = st.get("SignAgreement")
 AverageActivity = st.get("AverageActivity")
 Sparsity = st.get("Sparsity")
 
-shl(l0.get("AStat")[0,:])
+shm(l0.get("AStat")[0,:])

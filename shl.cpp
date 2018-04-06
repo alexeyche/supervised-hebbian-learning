@@ -107,7 +107,17 @@ enum EActivation {
 };
 
 TMatrix Relu(TMatrix x) {
-	return x.array().cwiseMax(0.0).cwiseMin(5.0);
+	return x.array().cwiseMax(0.0);
+}
+
+TMatrix Spike(TMatrix p, float dt) {
+	return p.unaryExpr([&](float pv) {
+		if (pv * dt >= static_cast<float>(std::rand())/RAND_MAX) {
+			return 1.0f;
+		} else {
+			return 0.0f;
+		}
+	});
 }
 
 TMatrix ReluDeriv(TMatrix x) {
@@ -460,12 +470,12 @@ struct TLayer {
 				}
 				// FbStat.block(0, t*LayerSize, BatchSize, LayerSize) = dUde;
 				
-				dW += Syn.transpose() * dUde;
-				dB += dUde.colwise().mean();
+				// dW += Syn.transpose() * dUde;
+				// dB += dUde.colwise().mean();
 				
 			} else {
-				dW += Syn.transpose() * fb;
-				dB += fb.colwise().mean();
+				// dW += Syn.transpose() * fb;
+				// dB += fb.colwise().mean();
 			}
 		}
 	
@@ -666,6 +676,7 @@ int run_model(
 	TStats testStats,
 	ui32 testFreq
 ) {
+	std::srand(0);
 	try {
 		std::cout.precision(5);
 		ENSURE(trainData.X.NRows % c.BatchSize == 0, \
