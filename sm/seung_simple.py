@@ -74,11 +74,11 @@ for e in xrange(epochs):
 	ff = np.dot(xv, W) 
 	ff = ff/np.linalg.norm(ff)
 
-	for t in xrange(num_iters):
-		fb_ap = np.dot(yv, Wo.T)
-		fb_ap = fb_ap/np.linalg.norm(fb_ap)
-		
-		y += dt * (act(( (ff + fb_ap)/10.0 - np.dot(y, L)) / Ldiag) - y)
+	fb_ap = np.dot(yv, Wo.T)
+	fb_ap = fb_ap/np.linalg.norm(fb_ap)
+
+	for t in xrange(num_iters):	
+		y += dt * (act(( (ff + fb_ap)/5.0 - np.dot(y, L)) / Ldiag) - y)
 		yo += dt * (act((np.dot(y, Wo) - np.dot(yo, Lo))/ Lodiag) - yo)
 
 		yh[t] = y.copy()
