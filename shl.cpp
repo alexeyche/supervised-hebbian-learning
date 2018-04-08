@@ -72,8 +72,8 @@ struct TMatrixFlat {
   	}
 
   	static void FromEigen(TMatrix m, TMatrixFlat* dst) {
-  		ENSURE(m.rows() == dst->NRows, "Rows are not aligned for saving eigen matrix");
-  		ENSURE(m.cols() == dst->NCols, "Cols are not aligned for saving eigen matrix");
+  		ENSURE(m.rows() == dst->NRows, "Rows are not aligned for saving eigen matrix, expected " << dst->NRows << ", got " << m.rows());
+  		ENSURE(m.cols() == dst->NCols, "Cols are not aligned for saving eigen matrix, expected " << dst->NCols << ", got " << m.cols());
 
   		memcpy(dst->Data, m.data(), sizeof(float) * dst->NRows * dst->NCols);
   	}
@@ -169,7 +169,6 @@ struct TNetConfig {
  	ui32 FeedbackDelay;
  	double OutputTau;
 
- 	TMatrixFlat DeStat;
  	TMatrixFlat YMeanStat;
 };
 
@@ -216,21 +215,28 @@ struct TData {
 	ui32 BatchSize;
 
 	TMatrix ReadInput(ui32 bi, ui32 ti) {
-		if (TimeOfDataSpike == ti) {
-			return Eigen::Map<TMatrix>(
-  				X.Data + bi*BatchSize*X.NCols, BatchSize, X.NCols
-  			);
-		}
-		return TMatrix::Zero(BatchSize, X.NCols);
+		return Eigen::Map<TMatrix>(
+			X.Data + bi*BatchSize*X.NCols, BatchSize, X.NCols
+		);
+
+		// if (TimeOfDataSpike == ti) {
+		// 	return Eigen::Map<TMatrix>(
+  // 				X.Data + bi*BatchSize*X.NCols, BatchSize, X.NCols
+  // 			);
+		// }
+		// return TMatrix::Zero(BatchSize, X.NCols);
 	}
 
 	TMatrix ReadOutput(ui32 bi, ui32 ti) {
-		if (TimeOfDataSpike == ti) {
-			return Eigen::Map<TMatrix>(
-  				Y.Data + bi*BatchSize*Y.NCols, BatchSize, Y.NCols
-  			);
-		}
-		return TMatrix::Zero(BatchSize, Y.NCols);
+		return Eigen::Map<TMatrix>(
+			Y.Data + bi*BatchSize*Y.NCols, BatchSize, Y.NCols
+		);
+		// if (TimeOfDataSpike == ti) {
+		// 	return Eigen::Map<TMatrix>(
+  // 				Y.Data + bi*BatchSize*Y.NCols, BatchSize, Y.NCols
+  // 			);
+		// }
+		// return TMatrix::Zero(BatchSize, Y.NCols);
 	}
 };
 
@@ -310,7 +316,7 @@ struct TLayer {
 
 	template <bool learn = true>
 	auto& Run(ui32 t, TMatrix ff, TMatrix fb, TStatsRecord* stats, bool monitorStats, bool monitorData) {
-		U =  ff * W + s.FbFactor * fb - L * A;		
+		U = ff * W + c.FbFactor * fb - A * L;
 		A += c.Dt * (Act(U) - A)/s.TauSoma;
 
 		if (monitorData) {
@@ -409,12 +415,13 @@ struct TNet {
 		for (ui32 t=0; t < c.SeqLength; ++t) {	
 			TMatrix x = data.ReadInput(batchIdx, t);
 			TMatrix y = data.ReadOutput(batchIdx, t);
-			
+
 			feedback.back() = feedbackSeq.block(0, t*OutputSize, c.BatchSize, OutputSize);
 
 			TMatrix current;
 			for (ui32 li=0; li < Layers.size(); ++li) {
 				bool isHidden = li < Layers.size()-1;
+				
 				if (isHidden) {
 					TMatrix a0Deriv = Layers[li].ActDeriv(Layers[li].U);	
 					feedback[li] = \
@@ -443,12 +450,11 @@ struct TNet {
 			}
 			
 			yMean += c.Dt * (y - yMean / c.OutputTau);
-
-			// if (t < c.SeqLength-c.FeedbackDelay) {
-			if (t == TData::TimeOfDataSpike) {
-				deSeq.block(0, (t+c.FeedbackDelay)*OutputSize, c.BatchSize, OutputSize) = de;
+			
+			if (t+c.FeedbackDelay < c.SeqLength) {
+				feedbackSeq.block(0, (t+c.FeedbackDelay)*OutputSize, c.BatchSize, OutputSize) = y;
 			}
-
+			
 			if (monitorData) {
 				yMeanStat.block(0, t*OutputSize, c.BatchSize, OutputSize) = yMean;
 			}
@@ -468,9 +474,7 @@ struct TNet {
 				stats->ClassificationError += 1.0 / c.BatchSize;
 			}
 		}
-		stats->SquaredError += deSeq.squaredNorm();
 
-		TMatrixFlat::FromEigen(deSeq, &c.DeStat);
 		TMatrixFlat::FromEigen(yMeanStat, &c.YMeanStat);
 	}
 

@@ -78,13 +78,13 @@ for e in xrange(epochs):
 	fb_ap = fb_ap/np.linalg.norm(fb_ap)
 
 	for t in xrange(num_iters):	
-		y += dt * (act(( (ff + fb_ap)/7.0 - np.dot(y, L)) / Ldiag) - y)
+		y += dt * (act((ff - np.dot(y, L)) / Ldiag) - y)
 		
 		ff_yo = np.dot(y, Wo)
-		ff_yo = ff_yo/np.linalg.norm(ff_yo)
+		# ff_yo = ff_yo/np.linalg.norm(ff_yo)
 		
-		fb_yo = yv
-		fb_yo = fb_yo/np.linalg.norm(fb_yo)
+		# fb_yo = yv
+		# fb_yo = fb_yo/np.linalg.norm(fb_yo)
 		
 		yo += dt * (act((ff_yo - np.dot(yo, Lo))/ Lodiag) - yo)
 
@@ -96,8 +96,7 @@ for e in xrange(epochs):
 	dL = np.dot(y.T, y) - p * p
 	dLdiag = np.sum(np.square(y), 0) - q * q
 
-	dWo = np.dot(y.T, yo) - Wo #k * (np.sum(Wo, axis=0) - p)
-	# dWo = np.dot(y.T, yv) - Wo #k * (np.sum(Wo, axis=0) - p)
+	dWo = np.dot(y.T, yv) - Wo #k * (np.sum(Wo, axis=0) - p)
 	dLo = np.dot(yo.T, yo) - np.eye(output_size)
 	dLodiag = np.sum(np.square(yv), 0) - q * q
 

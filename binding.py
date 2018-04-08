@@ -107,7 +107,6 @@ class NetConfig(ComplexStructure):
         ("BatchSize", ct.c_uint),
         ("FeedbackDelay", ct.c_uint),
         ("OutputTau", ct.c_double),
-        ("DeStat", MatrixFlat),
         ("YMeanStat", MatrixFlat),
     ]
 
