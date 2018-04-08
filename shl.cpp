@@ -87,23 +87,13 @@ int sgn(float d) {
 	} 
 }
 
-struct TStatsRecord {
-	double SquaredError = 0.0;
-	double ClassificationError = 0.0;
-	double SignAgreement = 0.0;
-	double AverageActivity = 0.0;
-	double Sparsity = 0.0;
-};
-
-
 ////////////////////////////////////
 // Activation function
 ////////////////////////////////////
 
 enum EActivation {
 	EA_RELU = 0,
-	EA_SIGMOID = 1,
-	EA_TANH = 2
+	EA_SIGMOID = 1
 };
 
 TMatrix Relu(TMatrix x) {
@@ -132,43 +122,6 @@ TMatrix Sigmoid(TMatrix x) {
 	return 1.0/(1.0 + (-x.array()).exp());
 }
 
-////////////////////////////////////
-// Layer-wise configuration
-////////////////////////////////////
-
-enum EGradientProcessing {
-	EGP_NO_GRADIENT_PROCESSING = 0,
-	EGP_LOCAL_LTD = 1,
-	EGP_NONLINEAR = 2,
-	EGP_HEBB = 3,
-	EGP_ACTIVE_HEBB = 4 
-};
-
-
-struct TLayerConfig {
-	ui32 Size;
-	double TauSoma;
-	double TauSyn;
-	double TauSynFb;
- 	double TauMean;
- 	double ApicalGain;
- 	double FbFactor;
- 	double TauGrad;
- 	double LearningRate;
- 	EActivation Act;
- 	EGradientProcessing GradProc;
-
-	TMatrixFlat W;
-	TMatrixFlat B;
-	TMatrixFlat dW;
-	TMatrixFlat dB;
-	TMatrixFlat Am;
-	TMatrixFlat UStat; 
-	TMatrixFlat AStat; 
-	TMatrixFlat FbStat;
-	TMatrixFlat SynStat;
-};
-
 
 
 ////////////////////////////////////
@@ -178,8 +131,8 @@ struct TLayerConfig {
 struct TSGDLearningRule {
 	TSGDLearningRule(TMatrix param) {}
 
-	void Update(TMatrix* param, TMatrix* dparam, TLayerConfig c) {
-		*param += c.LearningRate * (*dparam);
+	void Update(TMatrix* param, TMatrix* dparam, double learningRate) {
+		*param += learningRate * (*dparam);
 		dparam->setZero();
 	}
 };
@@ -190,119 +143,24 @@ struct TAdadeltaLearningRule {
 		AverageGradient = TMatrix::Zero(param.rows(), param.cols());
 	}
 
-	void Update(TMatrix* param, TMatrix* dparam, TLayerConfig c) {
-		AverageGradient += (dparam->array().square().matrix() - AverageGradient) / c.TauGrad;
+	void Update(TMatrix* param, TMatrix* dparam, double learningRate) {
+		AverageGradient += (dparam->array().square().matrix() - AverageGradient) / TauGrad;
 		
-		*param += c.LearningRate * (dparam->array() / (AverageGradient.array().sqrt() + 1e-05)).matrix();
+		*param += learningRate * (dparam->array() / (AverageGradient.array().sqrt() + 1e-05)).matrix();
 
 		dparam->setZero();
 	}
 
 	TMatrix AverageGradient;
+	double TauGrad = 100.0;
 };
 
 
 
 ////////////////////////////////////
-// Gradient processing
+// Main configuration
 ////////////////////////////////////
 
-
-void NoGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat, bool monitorStats) {
-	if (monitorStats) {
-		stat->SignAgreement += 1.0;
-	}
-}
-
-void LocalLtdGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat, bool monitorStats) {
-	ui32 signAgreement = 0;
-	for (ui32 i=0; i<de->rows(); ++i) {
-		for (ui32 j=0; j<de->cols(); ++j) {
-			float origValue = (*de)(i, j);
-			if ((*de)(i, j) < 0.0) {
-				(*de)(i, j) = - a(i, j);
-			}
-			signAgreement += sgn(origValue) == sgn((*de)(i, j));
-		}
-	}
-	if (monitorStats) {
-		stat->SignAgreement += static_cast<double>(signAgreement) / (de->rows() * de->cols());
-	}
-}
-
-void NonLinearGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat, bool monitorStats) {
-	ui32 signAgreement = 0;
-	for (ui32 i=0; i<de->rows(); ++i) {
-		for (ui32 j=0; j<de->cols(); ++j) {
-			float origValue = (*de)(i, j);
-			float& value = (*de)(i, j);
-			
-			if (value < 0.0) {
-				value = 0.0;  // Rectification
-			}
-
-			value = 1.0*(1.0/(1.0 + exp(-100.0*value)) - 0.5);  // Non-linear step			
-			
-			if (origValue <= 0.0) {
-				value -= a(i, j);  // Local ltd	
-			}
-			
-			signAgreement += sgn(origValue) == sgn(value);
-		}
-	}
-	if (monitorStats) {
-		stat->SignAgreement += static_cast<double>(signAgreement) / (de->rows() * de->cols());
-	}
-}
-
-
-float ProcessHebb(float value) {
-	if (value < 0.0) {
-		value = 0.0;  // Rectification
-	}
-	
-	// value = 2.0 * (1.0/(1.0 + exp(-100.0*value)) - 0.5);  // Non-linear step
-
-	return value;
-}
-
-void HebbGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat, bool monitorStats) {
-	ui32 signAgreement = 0;
-
-	for (ui32 i=0; i<de->rows(); ++i) {
-		for (ui32 j=0; j<de->cols(); ++j) {
-			float origValue = (*de)(i, j);
-
-			float value = ProcessHebb((*de)(i, j));
-			value += a(i, j);
-			value *= sgn(value - am(0, j));
-
-			signAgreement += sgn(origValue) == sgn(value);
-
-			(*de)(i, j) = value;
-		}
-	}
-
-	if (monitorStats) {
-		stat->SignAgreement += static_cast<double>(signAgreement) / (de->rows() * de->cols());
-	}
-}
-
-void ActiveHebbGradientProcessing(TMatrix a, TMatrix am, TMatrix* de, TStatsRecord* stat, bool monitorStats) {
-	for (ui32 i=0; i<de->rows(); ++i) {
-		for (ui32 j=0; j<de->cols(); ++j) {
-			float origValue = (*de)(i, j);
-
-			float value = ProcessHebb((*de)(i, j));
-
-			(*de)(i, j) = value;
-		}
-	}
-}
-
-////////////////////////////////////
-// Configuration
-////////////////////////////////////
 
 struct TNetConfig {
 	double Dt;
@@ -315,7 +173,40 @@ struct TNetConfig {
  	TMatrixFlat YMeanStat;
 };
 
-using TLearningRule = TAdadeltaLearningRule;
+
+////////////////////////////////////
+// Layer-wise configuration
+////////////////////////////////////
+
+struct TLayerConfig {
+	ui32 Size;
+ 	double FbFactor;
+	double TauSoma;
+	double TauSyn;
+	double TauSynFb;
+ 	double TauMean;
+ 	double P;
+ 	double Q;
+ 	double K;
+ 	double Omega;
+ 	double LearningRate;
+ 	double LateralLearnFactor;
+ 	double TauGrad;
+ 	EActivation Act;
+	TMatrixFlat W;
+	TMatrixFlat B;
+	TMatrixFlat L;
+	TMatrixFlat dW;
+	TMatrixFlat dB;
+	TMatrixFlat dL;
+	TMatrixFlat Am;
+	TMatrixFlat UStat; 
+	TMatrixFlat AStat; 
+	TMatrixFlat FbStat;
+	TMatrixFlat SynStat;
+};
+
+using TLearningRule = TSGDLearningRule;
 
 struct TData {
 	static constexpr ui32 TimeOfDataSpike = 5;
@@ -344,7 +235,13 @@ struct TData {
 };
 
 
-
+struct TStatsRecord {
+	double SquaredError = 0.0;
+	double ClassificationError = 0.0;
+	double SignAgreement = 0.0;
+	double AverageActivity = 0.0;
+	double Sparsity = 0.0;
+};
 
 struct TLayer {
 	TLayer(ui32 inputSize, TLayerConfig s0, TNetConfig c0)
@@ -353,22 +250,31 @@ struct TLayer {
 		, LayerSize(s0.Size)
 		, c(c0)
 		, s(s0)
+
 		, UStat(TMatrix::Zero(BatchSize, LayerSize*c.SeqLength))
 		, AStat(TMatrix::Zero(BatchSize, LayerSize*c.SeqLength))
 		, FbStat(TMatrix::Zero(BatchSize, LayerSize*c.SeqLength))
 		, SynStat(TMatrix::Zero(BatchSize, InputSize*c.SeqLength))
+
 		, W(TMatrixFlat::ToEigen(s.W))
 		, B(TMatrixFlat::ToEigen(s.B))
+		, L(TMatrixFlat::ToEigen(s.L))
+
 		, dW(TMatrix::Zero(InputSize, LayerSize))
 		, dB(TMatrix::Zero(1, LayerSize))
+		, dL(TMatrix::Zero(LayerSize, LayerSize))
+
 		, Am(TMatrixFlat::ToEigen(s.Am))
+
 		, WLearning(TLearningRule(W))
 		, BLearning(TLearningRule(B))
+		, LLearning(TLearningRule(L))
 	{
 		
 		CheckSizeMatch(UStat, s.UStat);
 		CheckSizeMatch(AStat, s.AStat);
 		CheckSizeMatch(FbStat, s.FbStat);
+		CheckSizeMatch(SynStat, s.SynStat);
 		
 		if (s.Act == EA_RELU) {
 			Act = &Relu;
@@ -379,24 +285,6 @@ struct TLayer {
 		} else {
 			ENSURE(0, "Failed to find activation function #" << s.Act);
 		}
-
-		if (s.GradProc == EGP_NO_GRADIENT_PROCESSING) {
-			GradProc = &NoGradientProcessing;
-		} 
-		else if (s.GradProc == EGP_LOCAL_LTD) {
-			GradProc = &LocalLtdGradientProcessing;
-		}
-		else if (s.GradProc == EGP_NONLINEAR) {
-			GradProc = &NonLinearGradientProcessing;
-		}
-		else if (s.GradProc == EGP_HEBB) {
-			GradProc = &HebbGradientProcessing;
-		}
-		else if (s.GradProc == EGP_ACTIVE_HEBB) {
-			GradProc = &ActiveHebbGradientProcessing;
-		} else {
-			ENSURE(0, "Failed to find gradient processing function #" << s.GradProc);
-		}		
 	}
 
 	~TLayer() {
@@ -406,8 +294,10 @@ struct TLayer {
 		TMatrixFlat::FromEigen(SynStat, &s.SynStat);
 		TMatrixFlat::FromEigen(W, &s.W);
 		TMatrixFlat::FromEigen(B, &s.B);
+		TMatrixFlat::FromEigen(L, &s.L);
 		TMatrixFlat::FromEigen(dW, &s.dW);
 		TMatrixFlat::FromEigen(dB, &s.dB);
+		TMatrixFlat::FromEigen(dL, &s.dL);
 		TMatrixFlat::FromEigen(Am, &s.Am);
 	}
 
@@ -420,71 +310,26 @@ struct TLayer {
 
 	template <bool learn = true>
 	auto& Run(ui32 t, TMatrix ff, TMatrix fb, TStatsRecord* stats, bool monitorStats, bool monitorData) {
-		Syn += c.Dt * (ff - Syn) / s.TauSyn;
-		Fb += c.Dt * (fb - Fb / s.TauSynFb);
-
-		TMatrix fbSnapshot = Fb;
-
-		GradProc(A, Am, &fbSnapshot, stats, monitorStats);
-
-		double fbFactor = learn ? s.FbFactor : 0.0;
-
-		TMatrix dU = Syn * W + fbFactor * fbSnapshot - U;
-
-		U += c.Dt * dU / s.TauSoma;
-		
-		A = Act(U.rowwise() - Am.row(0));
+		U =  ff * W + s.FbFactor * fb - L * A;		
+		A += c.Dt * (Act(U) - A)/s.TauSoma;
 
 		if (monitorData) {
 			UStat.block(0, t*LayerSize, BatchSize, LayerSize) = U;
 			AStat.block(0, t*LayerSize, BatchSize, LayerSize) = A;
-			// if (s.GradProc != EGP_ACTIVE_HEBB) {
-				FbStat.block(0, t*LayerSize, BatchSize, LayerSize) = fb;
-			// }
+			FbStat.block(0, t*LayerSize, BatchSize, LayerSize) = fb;
 			SynStat.block(0, t*InputSize, BatchSize, InputSize) = Syn;
 		}
 		
-		if (learn) {
-			if (s.TauMean > 1e-10) {
-				// Am += c.Dt * (s.ApicalGain * A.colwise().mean() - Am / s.TauMean);
-				Am += c.Dt * (s.ApicalGain * A.colwise().mean() - Am) / s.TauMean;
-			}
-
-			if (s.GradProc == EGP_ACTIVE_HEBB) {
-				TMatrix dUde(BatchSize, LayerSize);
-
-				ui32 signAgreement = 0;
-				for (ui32 i=0; i<BatchSize; ++i) {
-					for (ui32 j=0; j<LayerSize; ++j) {
-						float aZero = A(i, j) - Am(0, j);
-						int aZeroSign = sgn(aZero);
-						
-						dUde(i, j) = A(i, j) * aZeroSign;
-
-						signAgreement += sgn(Fb(i, j)) == sgn(dUde(i, j));
-					}
-				}
-				if (monitorStats) {
-					stats->SignAgreement += \
-						static_cast<double>(signAgreement) / (dUde.rows() * dUde.cols());					
-				}
-				// FbStat.block(0, t*LayerSize, BatchSize, LayerSize) = dUde;
-				
-				// dW += Syn.transpose() * dUde;
-				// dB += dUde.colwise().mean();
-				
-			} else {
-				// dW += Syn.transpose() * fb;
-				// dB += fb.colwise().mean();
-			}
+		if (learn) {				
 		}
 	
 		return A;
 	}
 
 	void ApplyGradients() {
-		WLearning.Update(&W, &dW, s);
-		BLearning.Update(&B, &dB, s);
+		WLearning.Update(&W, &dW, s.LearningRate);
+		BLearning.Update(&B, &dB, s.LearningRate);
+		LLearning.Update(&L, &dL, s.LearningRate * s.LateralLearnFactor);
 	}
 
 	ui32 BatchSize;
@@ -511,14 +356,17 @@ struct TLayer {
 	
 	TMatrix W;
 	TMatrix B;
+	TMatrix L;
 
 	TMatrix dW;
 	TMatrix dB;
+	TMatrix dL;
 
 	TMatrix Am;
 	
 	TLearningRule WLearning;
 	TLearningRule BLearning;
+	TLearningRule LLearning;
 };
 
 struct TNet {
@@ -540,7 +388,7 @@ struct TNet {
 	
 	template <bool learn = true>
 	void RunOverBatch(TData data, ui32 batchIdx, TStatsRecord* stats, bool monitorData = false) {
-		TMatrix deSeq = TMatrix::Zero(c.BatchSize, OutputSize*c.SeqLength);
+		TMatrix feedbackSeq = TMatrix::Zero(c.BatchSize, OutputSize*c.SeqLength);
 		
 		TMatrix yMeanStat = TMatrix::Zero(c.BatchSize, OutputSize*c.SeqLength);
 		TMatrix yMean = TMatrix::Zero(c.BatchSize, OutputSize);
@@ -562,7 +410,7 @@ struct TNet {
 			TMatrix x = data.ReadInput(batchIdx, t);
 			TMatrix y = data.ReadOutput(batchIdx, t);
 			
-			feedback.back() = deSeq.block(0, t*OutputSize, c.BatchSize, OutputSize);
+			feedback.back() = feedbackSeq.block(0, t*OutputSize, c.BatchSize, OutputSize);
 
 			TMatrix current;
 			for (ui32 li=0; li < Layers.size(); ++li) {
@@ -571,15 +419,6 @@ struct TNet {
 					TMatrix a0Deriv = Layers[li].ActDeriv(Layers[li].U);	
 					feedback[li] = \
 						a0Deriv.array() * (feedback[li+1] * Layers[li+1].W.transpose()).array();
-						
-					// if (t > 25) {
-					// 	if (li == 0) {
-					// 		feedback.back() = TMatrix::Zero(c.BatchSize, OutputSize);
-					// 	}
-					// 	feedback[li] = TMatrix::Zero(c.BatchSize, Layers[li].LayerSize);
-					// }
-
-					// Layers[li].GradProc(Layers[li].A, Layers[li].Am, &feedback[li], stats);
 				}
 
 				current = Layers[li].Run<learn>(
@@ -605,8 +444,6 @@ struct TNet {
 			
 			yMean += c.Dt * (y - yMean / c.OutputTau);
 
-			TMatrix de = yMean - current;
-			
 			// if (t < c.SeqLength-c.FeedbackDelay) {
 			if (t == TData::TimeOfDataSpike) {
 				deSeq.block(0, (t+c.FeedbackDelay)*OutputSize, c.BatchSize, OutputSize) = de;

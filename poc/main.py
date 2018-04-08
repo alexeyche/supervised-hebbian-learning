@@ -1,89 +1,152 @@
 
-import sys
-from matplotlib import pyplot as plt
-from matplotlib.pyplot import cm
-import numpy as np
-from util import *
-import numpy as np
 
-from poc.common import *
+import numpy as np
 from poc.opt import *
 from datasets import *
+from poc.common import *
+from cost import *
 
-# np.random.seed(10)
 
-
-gradient_postproc = hebb_postproc
-# ds = XorDataset()
 ds = ToyDataset()
-# ds = MNISTDataset()
-x_shape, y_shape = ds.train_shape
+act = Relu()
 
-batch_size, input_size = x_shape
-batch_size, output_size = y_shape
+seed = 10
+layer_size = 100
+dt = 0.25
+omega = 1.0
+k = 1.0
+num_iters = 50
 
-xt_shape, yt_shape = ds.test_shape
-test_batch_size = xt_shape[0]
-
-
-net = build_network(input_size, (100, output_size), (100.0, 0.0))
-
-
-# opt = SGDOpt((1e-05,) * 4)
-# opt = MomentumOpt((1e-07,) * 4, 0.9)
-opt = AdamOpt((1e-04,) * 4, 0.9)
-# opt = AdagradOpt((1e-02,)*4)
-# opt = AdadeltaOpt((1e-04,)*4, 0.9)
-
-opt.init(*[t for l in net for t in (l.W, l.b)])
-
-at_stat = [np.zeros((test_batch_size, l.layer_size)) for l in net]
-ut_stat = [np.zeros((test_batch_size, l.layer_size)) for l in net]
-dE_stat = [np.zeros((batch_size, l.layer_size)) for l in net]
-
-epochs = 15000
-
-stat_h = np.zeros((epochs, len(net)-1, 1))
-
-for epoch in xrange(epochs):
-    kwargs = {}
-    # if epoch == 999:
-    #     kwargs["plot"] = True
-
-    derivatives, st, m  = run_feedforward(
-        net, 
-        ds, 
-        is_train_phase=True, 
-        gradient_postproc=gradient_postproc,
-        **kwargs
-    )
-
-    _, stt, mt = run_feedforward(
-        net, 
-        ds, 
-        is_train_phase=False, 
-        gradient_postproc=None
-    )
-
-    a_stat, u_stat, stat, dE_stat = st
-    at_stat, ut_stat, statt, dE_stat_t = stt
-
-    stat_h[epoch] = stat.copy()
-
-    # [tt for l in net for tt in (l.W, l.b)]
-    
-    opt.update(*[-t for pair in derivatives for t in pair])
-
-    # for l, (dW, db) in zip(net, derivatives):
-    #     l.W += lrate * dW
-    #     l.b += lrate * db
+p, q = 0.1, 0.1
 
 
-    se, ll, er = m
-    tse, tll, ter = mt
 
-    if epoch % 100 == 0:
-        print "{}: train ll {:.4f}, er {:.4f}; test ll {:.4f}, er {:.4f}".format(epoch, ll, er, tll, ter)
+np.random.seed(seed)
 
-# shl(dE_actual[1], dE[1], a_stat[0][1], labels=["dE_actual", "dE", "A"])
-# shl(a_stat[1])
+(batch_size, input_size), (_, output_size) = ds.train_shape
+
+xv, yv = ds.next_train_batch()
+
+yv *= 0.1
+
+W = np.random.random((input_size, layer_size))
+W = W/(np.sum(W, 0)/p)
+
+Wo = np.random.random((layer_size, output_size))
+Wo = Wo/(np.sum(Wo, 0)/p)
+
+L = np.zeros((layer_size, layer_size))
+Ldiag = np.ones((layer_size,))
+
+Lo = np.zeros((output_size, output_size))
+Lodiag = np.ones((output_size,))
+
+
+D = np.ones((layer_size, layer_size)) * p
+np.fill_diagonal(D, q)
+
+opt = SGDOpt((
+	0.001, 0.1, 0.01, 
+	0.0001, 0.1, 0.01
+))
+opt.init(W, L, Ldiag, Wo, Lo, Lodiag)
+
+
+epochs = 1500
+metrics = np.zeros((epochs, 7))
+Ch = np.zeros((epochs, input_size, layer_size))
+for e in xrange(epochs):
+	yh = np.zeros((num_iters, batch_size, layer_size))
+	yoh = np.zeros((num_iters, batch_size, output_size))
+	lat_h = np.zeros((num_iters, batch_size, layer_size))
+	fb_h = np.zeros((num_iters, batch_size, layer_size))
+	ff_h = np.zeros((num_iters, batch_size, layer_size))
+
+	y = np.zeros((batch_size, layer_size))
+	yo = np.zeros((batch_size, output_size))
+	syn = np.zeros((batch_size, input_size))
+	osyn = np.zeros((batch_size, output_size))
+
+	metrics_it = np.zeros((num_iters, 5))
+
+	fb_ap = np.zeros((batch_size, layer_size)) #
+	
+	ff = np.dot(xv, W) 
+	ff = ff/np.linalg.norm(ff)
+
+	fb_ap = np.dot(yv, Wo.T)
+	fb_ap = fb_ap/np.linalg.norm(fb_ap)
+
+	for t in xrange(num_iters):	
+		y += dt * (act(( (ff + fb_ap)/7.0 - np.dot(y, L)) / Ldiag) - y)
+		
+		ff_yo = np.dot(y, Wo)
+		ff_yo = ff_yo/np.linalg.norm(ff_yo)
+		
+		fb_yo = yv
+		fb_yo = fb_yo/np.linalg.norm(fb_yo)
+		
+		yo += dt * (act((ff_yo - np.dot(yo, Lo))/ Lodiag) - yo)
+
+		yh[t] = y.copy()
+		yoh[t] = yo.copy()
+
+
+	dW = np.dot(xv.T, y) - k * (np.sum(W, axis=0) - p)
+	dL = np.dot(y.T, y) - p * p
+	dLdiag = np.sum(np.square(y), 0) - q * q
+
+	dWo = np.dot(y.T, yo) - Wo #k * (np.sum(Wo, axis=0) - p)
+	# dWo = np.dot(y.T, yv) - Wo #k * (np.sum(Wo, axis=0) - p)
+	dLo = np.dot(yo.T, yo) - np.eye(output_size)
+	dLodiag = np.sum(np.square(yv), 0) - q * q
+
+	opt.update(-dW, -dL, -dLdiag, -dWo, -dLo, -dLodiag)
+
+	np.fill_diagonal(L, 0.0)
+	W = np.minimum(np.maximum(W, 0.0), omega)
+	L = np.maximum(L, 0.0)
+	Ldiag = np.maximum(Ldiag, 0.0)
+
+
+	np.fill_diagonal(Lo, 0.0)
+	Wo = np.minimum(np.maximum(Wo, 0.0), omega)
+	Lo = np.maximum(Lo, 0.0)
+	Lodiag = np.maximum(Lodiag, 0.0)
+
+	opt.init(W, L, Ldiag, Wo, Lo, Lodiag)
+
+	xtv, ytv = ds.next_test_batch()
+
+	yt = np.zeros((xtv.shape[0], layer_size))
+	yto = np.zeros((xtv.shape[0], output_size))
+
+	fft = np.dot(xtv, W)
+	
+	for t in xrange(num_iters):
+		yt += dt * (act((fft - np.dot(yt, L)) / Ldiag) - yt)
+		yto += dt * (act((np.dot(yt, Wo) - np.dot(yto, Lo))/ Lodiag) - yto)
+
+
+	metrics[e, :5] = (
+		correlation_cost(W, xv, y),
+		phi_capital(W, p, k),
+		lateral_cost(L, Ldiag, p, q),
+		np.linalg.norm(ff - y),
+		np.linalg.norm(fb_ap - y)
+	)
+	metrics[e, -2] = np.mean(
+		np.not_equal(
+			np.argmax(yto, 1), 
+			np.argmax(ytv, 1)
+		)
+	)
+	metrics[e, -1] = cmds_cost(xv, y)
+	Ch[e] = np.dot(xv.T, y)
+	
+	if e % 10 == 0:
+
+		print "Epoch {}, {}".format(
+			e,
+			", ".join(["{:.4f}".format(m) for m in metrics[e, :]])
+		)
