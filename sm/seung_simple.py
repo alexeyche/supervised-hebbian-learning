@@ -10,7 +10,7 @@ from sm.sm_cost import *
 ds = ToyDataset()
 act = Relu()
 
-seed = 7
+seed = 10
 layer_size = 100
 dt = 0.25
 omega = 1.0
@@ -78,7 +78,7 @@ for e in xrange(epochs):
 		fb_ap = np.dot(yv, Wo.T)
 		fb_ap = fb_ap/np.linalg.norm(fb_ap)
 		
-		y += dt * (act(( (ff + fb_ap)/2.0 - np.dot(y, L)) / Ldiag) - y)
+		y += dt * (act(( (ff + fb_ap)/10.0 - np.dot(y, L)) / Ldiag) - y)
 		yo += dt * (act((np.dot(y, Wo) - np.dot(yo, Lo))/ Lodiag) - yo)
 
 		yh[t] = y.copy()
