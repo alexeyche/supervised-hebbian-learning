@@ -12,13 +12,13 @@ act = Relu()
 seed = 5
 layer_size = 25
 dt = 0.25
-omega = 0.1
+omega = 0.5
 k = 1.0
 num_iters = 25
 
-p, q = 0.05, 0.09
-lrate_lat = 0.05
-lrate_ff = 0.001
+p, q = 0.09, 0.01
+lrate_lat = 0.01
+lrate_ff = 0.01
 t_data_spike = 5
 
 def phi_capital(C):
@@ -47,7 +47,7 @@ W = np.random.random((input_size, layer_size))
 W = W/(np.sum(W, 0)/p)
 
 Wo = np.random.random((layer_size, output_size))
-Wo = Wo/(np.sum(Wo, 0)/(p*12))
+Wo = Wo/(np.sum(Wo, 0)/(p*15))
 
 L = np.zeros((layer_size, layer_size))
 Ldiag = np.ones((layer_size,))
@@ -56,17 +56,18 @@ D = np.ones((layer_size, layer_size)) * p
 np.fill_diagonal(D, q)
 
 epochs = 1
-metrics = np.zeros((epochs, 4))
+metrics = np.zeros((epochs, 7))
 for e in xrange(epochs):
 	yh = np.zeros((num_iters, batch_size, layer_size))
 	lat_h = np.zeros((num_iters, batch_size, layer_size))
+	fb_h = np.zeros((num_iters, batch_size, layer_size))
 	ff_h = np.zeros((num_iters, batch_size, layer_size))
 
 	y = np.zeros((batch_size, layer_size))
 	syn = np.zeros((batch_size, input_size))
 	osyn = np.zeros((batch_size, output_size))
 
-	metrics_it = np.zeros((num_iters, 3))
+	metrics_it = np.zeros((num_iters, 5))
 
 	for t in xrange(num_iters):
 		dsyn = np.zeros((batch_size, input_size))
@@ -80,10 +81,12 @@ for e in xrange(epochs):
 		syn += dt * (dsyn - syn)
 		osyn += dt * (dosyn - osyn)
 
-		ff = np.dot(syn, W) + np.dot(osyn, Wo.T)
-		fb = np.dot(y, L)
 
-		y += dt * (act((ff - fb) / Ldiag) - y)
+		fb_ap = np.dot(osyn, Wo.T)
+		ff = np.dot(syn, W) 
+		fb_lat = np.dot(y, L)
+
+		y += dt * (act((ff + fb_ap - fb_lat) / Ldiag) - y)
 
 		dW = np.dot(syn.T, y) - k * (np.sum(W, axis=0) - p)
 		dL = np.dot(y.T, y) - p * p
@@ -99,18 +102,27 @@ for e in xrange(epochs):
 		Ldiag = np.maximum(Ldiag, 0.0)
 
 		yh[t] = y.copy()
-		lat_h[t] = fb
+		lat_h[t] = fb_lat
 		ff_h[t] = ff
+		fb_h[t] = fb_ap
 
 		metrics_it[t, :] = (
 			correlation_cost(W, syn, y),
 			phi_capital(W),
-			lateral_cost(L, Ldiag)
+			lateral_cost(L, Ldiag),
+			np.linalg.norm(ff - y),
+			np.linalg.norm(fb_ap - y)
 		)
 
-	metrics[e, :3] = np.mean(metrics_it, 0)
-	metrics[e, 3] = cmds_cost(xv, yh[t_data_spike])
-	if e % 100 == 0:
+	metrics[e, :5] = np.mean(metrics_it, 0)
+	metrics[e, -2] = np.mean(
+		np.not_equal(
+			np.argmax(np.dot(yh[t_data_spike+1], Wo), 1), 
+			np.argmax(yv, 1)
+		)
+	)
+	metrics[e, -1] = cmds_cost(xv, yh[t_data_spike])
+	if e % 10 == 0:
 		print "Epoch {}, {}".format(
 			e,
 			", ".join(["{:.4f}".format(m) for m in metrics[e, :]])

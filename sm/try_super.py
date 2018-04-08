@@ -7,17 +7,13 @@ import sklearn.decomposition as dec
 from poc.opt import *
 from datasets import *
 from poc.common import *
+from sm.sm_cost import *
 
 def xavier_init(fan_in, fan_out, const=1.0):
     low = -const * np.sqrt(6.0 / (fan_in + fan_out))
     high = const * np.sqrt(6.0 / (fan_in + fan_out))
     return (low + np.random.random((fan_in, fan_out)) * (high - low)).astype(np.float32)
 
-
-def cost(x, y):
-	x_gram = np.dot(x, x.T)
-	y_gram = np.dot(y, y.T)
-	return np.sum(np.square(y_gram - x_gram))
 
 
 
@@ -132,8 +128,8 @@ for e in xrange(5000):
 	if e % 10 == 0:
 		print "E {}, Cost0 {:.4f}, Cost1 {:.4f}, Class.error: {:.4f}, Class.error, train: {:.4f}".format(
 			e, 
-			cost(x, y), 
-			cost(z, y),
+			cmds_cost(x, y), 
+			cmds_cost(z, y),
 			np.linalg.norm(oth[6] - y_t),
 			np.linalg.norm(zh[6] - y_t)
 		)

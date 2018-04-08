@@ -5,6 +5,7 @@ from datasets import ToyDataset
 from sklearn.datasets import make_classification, make_circles
 import sklearn.decomposition as dec
 from poc.opt import *
+from sm.sm_cost import *
 
 def xavier_init(fan_in, fan_out, const=1.0):
     low = -const * np.sqrt(6.0 / (fan_in + fan_out))
@@ -12,22 +13,6 @@ def xavier_init(fan_in, fan_out, const=1.0):
     return (low + np.random.random((fan_in, fan_out)) * (high - low)).astype(np.float32)
 
 
-def cost(x, y):
-	x_gram = np.dot(x, x.T)
-	y_gram = np.dot(y, y.T)
-	return np.sum(np.square(y_gram - x_gram))
-
-def eigvec_cost(W, M, eigvec):
-	F = np.dot(W, np.eye(M.shape[0]) + np.linalg.inv(M))
-
-	_, eigvecF = np.linalg.eig(np.dot(F, F.T))
-	return np.sum(np.square(eigvecF - eigvec))
-
-def orthonormal_cost(W, M):
-	F = np.dot(W, np.eye(M.shape[0]) + np.linalg.inv(M))
-
-	return np.linalg.norm(np.dot(F.T, F) - np.eye(M.shape[0]))
-	
 
 seed = 5
 np.random.seed(seed)
@@ -89,7 +74,7 @@ for e in xrange(2500):
 	if e % 10 == 0:
 		print "E {}, Cost(0) {:.4f}, Cost(eig): {:.4f}, Cost(orth): {:.4f}".format(
 			e, 
-			cost(x, y), 
+			cmds_cost(x, y), 
 			eigvec_cost(W, M, eigvec),
 			orthonormal_cost(W, M),
 		)

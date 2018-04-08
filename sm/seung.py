@@ -4,7 +4,7 @@ import numpy as np
 from poc.opt import *
 from datasets import *
 from poc.common import *
-
+from sm.sm_cost import *
 
 ds = ToyDataset()
 act = Relu()
@@ -20,20 +20,6 @@ p, q = 0.05, 0.09
 lrate_lat = 0.05
 lrate_ff = 0.001
 t_data_spike = 5
-
-def phi_capital(C):
-	return np.sum(np.square(np.sum(C, axis=0) - p)) * k/2.0
-
-def lateral_cost(L, Ldiag):
-	return np.sum(np.square(L - p)) + np.sum(np.square(Ldiag - q))
-
-def correlation_cost(W, syn, y):
-	return np.sum(W * np.dot(syn.T, y))
-
-def cmds_cost(x, y):
-	x_gram = np.dot(x, x.T)
-	y_gram = np.dot(y, y.T)
-	return np.sum(np.square(y_gram - x_gram))
 
 
 
@@ -97,8 +83,8 @@ for e in xrange(epochs):
 
 		metrics_it[t, :] = (
 			correlation_cost(W, syn, y),
-			phi_capital(W),
-			lateral_cost(L, Ldiag)
+			phi_capital(W, p, k),
+			lateral_cost(L, Ldiag, p, q)
 		)
 
 	metrics[e, :3] = np.mean(metrics_it, 0)
