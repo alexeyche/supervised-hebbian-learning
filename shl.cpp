@@ -37,6 +37,7 @@ extern "C" {
 #include <sstream>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 #define ENSURE(cond, error) \
     if(!(cond)) { \
@@ -316,7 +317,7 @@ struct TLayer {
 
 	template <bool learn = true>
 	auto& Run(ui32 t, TMatrix ff, TMatrix fb, TStatsRecord* stats, bool monitorStats, bool monitorData) {
-		U = ff * W + c.FbFactor * fb - A * L;
+		U = ff * W + s.FbFactor * fb - A * L;
 		A += c.Dt * (Act(U) - A)/s.TauSoma;
 
 		if (monitorData) {

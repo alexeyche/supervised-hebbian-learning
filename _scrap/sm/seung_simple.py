@@ -26,6 +26,9 @@ np.random.seed(seed)
 (batch_size, input_size), (_, output_size) = ds.train_shape
 
 xv, yv = ds.next_train_batch()
+# xv = 0.05*(xv - np.min(xv))
+# xv += np.min(xv)
+# xv = np.log(1.0 + np.exp(xv))
 
 yv *= 0.1
 

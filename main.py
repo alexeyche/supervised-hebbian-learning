@@ -16,6 +16,10 @@ def xavier_init(fan_in, fan_out, const=1.0):
     high = const * np.sqrt(6.0 / (fan_in + fan_out))
     return (low + np.random.random((fan_in, fan_out)) * (high - low)).astype(np.float32)
 
+def positive_random_norm(fan_in, fan_out, p):
+    m = np.random.random((fan_in, fan_out))
+    m = m/(np.sum(m, 0)/p)
+    return m
 
 ds = ToyDataset()
 
@@ -28,6 +32,8 @@ _, input_size, _, output_size = x.shape + y.shape
 batch_size = 40
 seq_length = 60
 layer_size = 45
+p = 0.1
+q = 0.1
 
 c = NetConfig(
     Dt = 1.0,
@@ -53,9 +59,9 @@ net = (
         LearningRate=0.001,
         LateralLearnFactor=100.0,
         Act = RELU,
-        W = xavier_init(input_size, layer_size),
+        W = positive_random_norm(input_size, layer_size, p),
         B = np.ones((1, layer_size)),
-        L = xavier_init(layer_size, layer_size),
+        L = np.zeros((layer_size, layer_size)),
         dW = np.zeros((input_size, layer_size)),
         dB = np.zeros((1, layer_size)),
         dL = np.zeros((layer_size, layer_size)),
@@ -79,9 +85,9 @@ net = (
         LearningRate=0.0001,
         LateralLearnFactor=100.0,
         Act = RELU,
-        W = xavier_init(layer_size, output_size),
+        W = positive_random_norm(layer_size, output_size, p),
         B = np.ones((1, output_size)),
-        L = xavier_init(output_size, output_size),
+        L = np.zeros((output_size, output_size)),
         dW = np.zeros((layer_size, output_size)),
         dB = np.zeros((1, output_size)),
         dL = np.zeros((output_size, output_size)),
