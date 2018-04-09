@@ -36,7 +36,7 @@ p = 0.1
 q = 0.1
 
 c = NetConfig(
-    Dt = 1.0,
+    Dt = 0.5,
     SeqLength=seq_length,
     BatchSize=batch_size,
     FeedbackDelay=1,
@@ -54,8 +54,8 @@ net = (
         P = 0.1,
         Q = 0.1,
         K = 1.0,
-        Omega = 0.5,
-        FbFactor = 1.0,
+        Omega = 1.0,
+        FbFactor = 0.0,
         LearningRate=0.0001,
         LateralLearnFactor=100.0,
         Act = RELU,
@@ -80,7 +80,7 @@ net = (
         P = 0.1,
         Q = 0.1,
         K = 1.0,
-        Omega = 0.5,
+        Omega = 1.0,
         FbFactor = 1.0,
         LearningRate=0.0001,
         LateralLearnFactor=10.0,
@@ -103,14 +103,14 @@ l0 = net[0]
 l1 = net[1]
 
 trainStats, testStats = run_model(
-    100,
+    1000,
     net,
     c,
     x,
     y,
     xt,
     yt,
-    test_freq = 1
+    test_freq = 100
 )
     
 

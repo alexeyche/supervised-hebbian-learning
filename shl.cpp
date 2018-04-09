@@ -362,14 +362,16 @@ struct TLayer {
 			UStat.block(0, t*LayerSize, BatchSize, LayerSize) = U;
 			AStat.block(0, t*LayerSize, BatchSize, LayerSize) = A;
 			FbStat.block(0, t*LayerSize, BatchSize, LayerSize) = fb;
-			SynStat.block(0, t*InputSize, BatchSize, InputSize) = Syn;
+			SynStat.block(0, t*InputSize, BatchSize, InputSize) = ff; //Syn;
 		}
 		
 		if (learn && t == c.SeqLength-1) {
-			dW += (
-				(ff.transpose() * A).array().rowwise() 
-				  - s.K * (W.colwise().sum().array() - s.P)
-			).matrix();
+			// dW += (
+			// 	(ff.transpose() * A).array().rowwise() 
+			// 	  -  s.K * (W.colwise().sum().array() - s.P)
+			// ).matrix();
+
+			dW += ff.transpose() * A - W;
 
 			dL += (
 				(A.transpose() * A).array() - s.P * s.P
