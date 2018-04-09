@@ -50,6 +50,7 @@ extern "C" {
 
 using TMatrix = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 using TArray = Eigen::Array<float, Eigen::Dynamic, Eigen::Dynamic>;
+using TVector = Eigen::Matrix<float, 1, Eigen::Dynamic, Eigen::RowMajor>;
 
 #define CheckSizeMatch(m, mf) \
 	ENSURE(m.rows() == mf.NRows,  \
@@ -129,8 +130,8 @@ TMatrix Sigmoid(TMatrix x) {
 // Learning rules
 ////////////////////////////////////
 
-struct TSGDLearningRule {
-	TSGDLearningRule(TMatrix param) {}
+struct TSGDOptimization {
+	TSGDOptimization(TMatrix param) {}
 
 	void Update(TMatrix* param, TMatrix* dparam, double learningRate) {
 		*param += learningRate * (*dparam);
@@ -139,8 +140,8 @@ struct TSGDLearningRule {
 };
 
 
-struct TAdadeltaLearningRule {
-	TAdadeltaLearningRule(TMatrix param) {
+struct TAdadeltaOptimization {
+	TAdadeltaOptimization(TMatrix param) {
 		AverageGradient = TMatrix::Zero(param.rows(), param.cols());
 	}
 
@@ -206,7 +207,7 @@ struct TLayerConfig {
 	TMatrixFlat SynStat;
 };
 
-using TLearningRule = TSGDLearningRule;
+using TOptimization = TSGDOptimization;
 
 struct TData {
 	static constexpr ui32 TimeOfDataSpike = 5;
@@ -250,8 +251,36 @@ struct TStatsRecord {
 	double Sparsity = 0.0;
 };
 
+
 struct TLayer {
-	TLayer(ui32 inputSize, TLayerConfig s0, TNetConfig c0)
+	static void UpdateDerivativesHidden(TMatrix x, TLayer* l) {
+		l->dW += (
+			(x.transpose() * l->A).array().rowwise() 
+			  - l->s.K * (l->W.colwise().sum().array() - l->s.P)
+		).matrix();
+
+		l->dL += (
+			(l->A.transpose() * l->A).array() - l->s.P * l->s.P
+		).matrix();
+
+		l->dB += (
+			l->A.array().square().colwise().sum() - l->s.Q * l->s.Q
+		).matrix();
+	}
+
+	static void UpdateDerivativesOutput(TMatrix x, TLayer* l) {
+		l->dW += (x.transpose() * l->A) - l->W;
+
+		l->dL += (
+			(l->A.transpose() * l->A).array() - l->s.P * l->s.P
+		).matrix();
+
+		l->dB += (
+			l->A.array().square().colwise().sum() - l->s.Q * l->s.Q
+		).matrix();	
+	}
+
+	TLayer(ui32 inputSize, TLayerConfig s0, TNetConfig c0, bool isHidden)
 		: BatchSize(c0.BatchSize)
 		, InputSize(inputSize)
 		, LayerSize(s0.Size)
@@ -273,9 +302,9 @@ struct TLayer {
 
 		, Am(TMatrixFlat::ToEigen(s.Am))
 
-		, WLearning(TLearningRule(W))
-		, BLearning(TLearningRule(B))
-		, LLearning(TLearningRule(L))
+		, WLearning(TOptimization(W))
+		, BLearning(TOptimization(B))
+		, LLearning(TOptimization(L))
 	{
 		
 		CheckSizeMatch(UStat, s.UStat);
@@ -291,6 +320,12 @@ struct TLayer {
 			Act = &Sigmoid;
 		} else {
 			ENSURE(0, "Failed to find activation function #" << s.Act);
+		}
+
+		if (isHidden) {
+			UpdateDerivatives = &UpdateDerivativesHidden;
+		} else {
+			UpdateDerivatives = &UpdateDerivativesOutput;
 		}
 	}
 
@@ -317,8 +352,11 @@ struct TLayer {
 
 	template <bool learn = true>
 	auto& Run(ui32 t, TMatrix ff, TMatrix fb, TStatsRecord* stats, bool monitorStats, bool monitorData) {
-		U = ff * W + s.FbFactor * fb - A * L;
-		A += c.Dt * (Act(U) - A)/s.TauSoma;
+		double fbFactor = learn ? s.FbFactor : 0.0;
+
+		U = ff * W + fbFactor * fb - A * L;
+		
+		A += c.Dt * ((Act(U).array().rowwise() / B.row(0).array()).matrix() - A)/s.TauSoma;
 
 		if (monitorData) {
 			UStat.block(0, t*LayerSize, BatchSize, LayerSize) = U;
@@ -327,7 +365,19 @@ struct TLayer {
 			SynStat.block(0, t*InputSize, BatchSize, InputSize) = Syn;
 		}
 		
-		if (learn) {				
+		if (learn && t == c.SeqLength-1) {
+			dW += (
+				(ff.transpose() * A).array().rowwise() 
+				  - s.K * (W.colwise().sum().array() - s.P)
+			).matrix();
+
+			dL += (
+				(A.transpose() * A).array() - s.P * s.P
+			).matrix();
+
+			dB += (
+				A.array().square().colwise().sum() - s.Q * s.Q
+			).matrix();
 		}
 	
 		return A;
@@ -337,6 +387,11 @@ struct TLayer {
 		WLearning.Update(&W, &dW, s.LearningRate);
 		BLearning.Update(&B, &dB, s.LearningRate);
 		LLearning.Update(&L, &dL, s.LearningRate * s.LateralLearnFactor);
+
+		W = W.cwiseMax(0.0).cwiseMin(s.Omega);
+		L.diagonal() = TVector::Zero(LayerSize);
+		B = B.cwiseMax(0.0);
+		L = L.cwiseMax(0.0);
 	}
 
 	ui32 BatchSize;
@@ -350,7 +405,7 @@ struct TLayer {
 	std::function<TMatrix(TMatrix)> ActDeriv;
 	
 	std::function<void(TMatrix, TMatrix, TMatrix*, TStatsRecord*, bool)> GradProc;
-
+	std::function<void(TMatrix, TLayer*)> UpdateDerivatives;
 	TMatrix Syn;
 	TMatrix Fb;
 	TMatrix U;
@@ -371,10 +426,12 @@ struct TLayer {
 
 	TMatrix Am;
 	
-	TLearningRule WLearning;
-	TLearningRule BLearning;
-	TLearningRule LLearning;
+	TOptimization WLearning;
+	TOptimization BLearning;
+	TOptimization LLearning;
 };
+
+
 
 struct TNet {
 	TNet(ui32 inputSize, TLayerConfig* layersConfigs, ui32 layersNum, TNetConfig c0)
@@ -384,7 +441,8 @@ struct TNet {
 			Layers.emplace_back(
 				li == 0 ? inputSize : layersConfigs[li-1].Size,
 				layersConfigs[li], 
-				c
+				c,
+				li < layersNum-1
 			);
 		}
 		OutputSize = Layers.back().LayerSize;
@@ -539,8 +597,7 @@ int run_model(
 				net.RunOverBatch(
 					trainData, 
 					bi, 
-					&trainStatsRec,
-					/*monitorData*/bi == trainNumBatches-1
+					&trainStatsRec
 				);
 			}
 
@@ -555,8 +612,8 @@ int run_model(
 					net.RunOverBatch</*learn*/false>(
 						testData, 
 						bi, 
-						&testStatsRec
-						// /*monitorData*/bi == testNumBatches-1
+						&testStatsRec,
+						/*monitorData*/bi == testNumBatches-1
 					);
 				}
 

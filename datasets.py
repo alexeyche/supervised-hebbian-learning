@@ -54,6 +54,7 @@ def get_toy_data(dest_dim, size, n_classes=2, seed=2):
         n_classes=n_classes,
         random_state=seed
     )
+    # return 0.01*np.log(1.0 + np.exp(x_values)), y_values.astype(np.int32)
     return x_values, y_values.astype(np.int32)
 
 def get_toy_data_mclass():

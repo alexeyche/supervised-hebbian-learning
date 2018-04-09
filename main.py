@@ -21,6 +21,16 @@ def positive_random_norm(fan_in, fan_out, p):
     m = m/(np.sum(m, 0)/p)
     return m
 
+def bound_weights(l):
+    L = l.get("L")
+    W = l.get("W")
+    B = l.get("B")
+    np.fill_diagonal(L, 0.0)
+    l.set("W", np.minimum(np.maximum(W, 0.0), l.Omega))
+    l.set("L", np.maximum(L, 0.0))
+    l.set("B", np.maximum(B, 0.0))
+
+
 ds = ToyDataset()
 
 x, y = ds.train_data
@@ -28,10 +38,15 @@ x, y = ds.train_data
 xt, yt = ds.test_data
 
 
+y *= 0.1
+yt *= 0.1
+
 _, input_size, _, output_size = x.shape + y.shape
+
 batch_size = 40
-seq_length = 60
-layer_size = 45
+seq_length = 50
+
+layer_size = 100
 p = 0.1
 q = 0.1
 
@@ -54,8 +69,8 @@ net = (
         P = 0.1,
         Q = 0.1,
         K = 1.0,
-        Omega = 1.0,
-        FbFactor = 0.0,
+        Omega = 0.5,
+        FbFactor = 1.0,
         LearningRate=0.001,
         LateralLearnFactor=100.0,
         Act = RELU,
@@ -80,8 +95,8 @@ net = (
         P = 0.1,
         Q = 0.1,
         K = 1.0,
-        Omega = 1.0,
-        FbFactor = 0.0,
+        Omega = 0.5,
+        FbFactor = 1.0,
         LearningRate=0.0001,
         LateralLearnFactor=100.0,
         Act = RELU,
@@ -103,10 +118,18 @@ l0 = net[0]
 l1 = net[1]
 
 sa = []
-opt = SGDOpt((1.0,))
-opt.init(l0.get("W"), l1.get("W"))
+opt = SGDOpt((
+    0.001, 0.001, 0.01, 
+    0.001, 0.001, 0.01,
+))
 
-for e in xrange(1):
+opt.init(
+    l0.get("W"), l0.get("B"), l0.get("L"), 
+    l1.get("W"), l1.get("B"), l1.get("L"), 
+)
+
+
+for e in xrange(100):
     trainStats, testStats = run_model(
         1,
         net,
@@ -118,8 +141,27 @@ for e in xrange(1):
         test_freq = 10
     )
 
-    # opt.update(-dW)
-    # l0.set("W", opt.params[0])
+    l0.get("AStat")
+
+    opt.update(
+        -l0.get("dW"), -l0.get("dB"), -l0.get("dL"), 
+        -l1.get("dW"), -l1.get("dB"), -l1.get("dL"), 
+    )
+
+    l0.set("W", opt.params[0])
+    l0.set("B", opt.params[1])
+    l0.set("L", opt.params[2])
+    l1.set("W", opt.params[3])
+    l1.set("B", opt.params[4])
+    l1.set("L", opt.params[5])
+    
+    bound_weights(l0)
+    bound_weights(l1)
+
+    opt.params = [
+        l0.get("W"), l0.get("B"), l0.get("L"), 
+        l1.get("W"), l1.get("B"), l1.get("L"), 
+    ]
 
     
 
@@ -131,3 +173,7 @@ AverageActivity = st.get("AverageActivity")
 Sparsity = st.get("Sparsity")
 
 shl(l0.get("AStat")[0,:])
+
+
+## need metrics
+## need good data to test

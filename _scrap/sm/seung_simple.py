@@ -26,6 +26,7 @@ np.random.seed(seed)
 (batch_size, input_size), (_, output_size) = ds.train_shape
 
 xv, yv = ds.next_train_batch()
+
 # xv = 0.05*(xv - np.min(xv))
 # xv += np.min(xv)
 # xv = np.log(1.0 + np.exp(xv))
@@ -55,7 +56,7 @@ opt = SGDOpt((
 opt.init(W, L, Ldiag, Wo, Lo, Lodiag)
 
 
-epochs = 500
+epochs = 100
 metrics = np.zeros((epochs, 7))
 Ch = np.zeros((epochs, input_size, layer_size))
 for e in xrange(epochs):
@@ -79,6 +80,7 @@ for e in xrange(epochs):
 
 	fb_ap = np.dot(yv, Wo.T)
 	fb_ap = fb_ap/np.linalg.norm(fb_ap)
+	# fb_ap = np.zeros((batch_size, layer_size))
 
 	for t in xrange(num_iters):	
 		y += dt * (act(( (ff + fb_ap)/5.0 - np.dot(y, L)) / Ldiag) - y)
