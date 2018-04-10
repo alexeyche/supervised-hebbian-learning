@@ -126,3 +126,5 @@ shl(l0.get("AStat")[0,:])
 
 ## need metrics
 ## need good data to test
+
+## http://scikit-learn.org/stable/auto_examples/cluster/plot_dict_face_patches.html#sphx-glr-auto-examples-cluster-plot-dict-face-patches-py
