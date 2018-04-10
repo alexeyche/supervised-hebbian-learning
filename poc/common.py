@@ -220,3 +220,10 @@ def run_feedforward(net, ds, is_train_phase, gradient_postproc, **kwargs):
     return derivatives, (a_stat, u_stat, stat, dE_stat), (se, ll, er)
 
 
+
+def positive_random_norm(fan_in, fan_out, p):
+    m = np.random.random((fan_in, fan_out))
+    m = m/(np.sum(m, 0)/p)
+    return m
+
+

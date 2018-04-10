@@ -23,6 +23,7 @@ extern "C" {
 		TStats,
 		ui32
 	);
+
 }
 
 ////////////////////////////////////
@@ -599,7 +600,8 @@ int run_model(
 				net.RunOverBatch(
 					trainData, 
 					bi, 
-					&trainStatsRec
+					&trainStatsRec,
+					/*monitorData*/bi == testNumBatches-1
 				);
 			}
 
@@ -614,8 +616,8 @@ int run_model(
 					net.RunOverBatch</*learn*/false>(
 						testData, 
 						bi, 
-						&testStatsRec,
-						/*monitorData*/bi == testNumBatches-1
+						&testStatsRec
+						// /*monitorData*/bi == testNumBatches-1
 					);
 				}
 
@@ -639,3 +641,4 @@ int run_model(
 	}
 	return 0;
 }
+

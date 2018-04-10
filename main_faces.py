@@ -6,42 +6,68 @@ from binding import *
 from util import *
 from datasets import *
 from sklearn.metrics import log_loss
-from poc.common import Relu
+from poc.common import *
 from poc.opt import *
+from sklearn import datasets as sklearn_datasets
+from sklearn.feature_extraction.image import extract_patches_2d
 
 np.random.seed(12)
+rng = np.random.RandomState(12)
 
-def positive_random_norm(fan_in, fan_out, p):
-    m = np.random.random((fan_in, fan_out))
-    m = m/(np.sum(m, 0)/p)
-    return m
+faces = sklearn_datasets.fetch_olivetti_faces()
+image_num = faces.images.shape[0]
+image_num = 20  # TODO
 
-ds = ToyDataset()
+patch_size = (20, 20)
+max_patches = 50
 
-x, y = ds.train_data
+data = np.zeros((max_patches * image_num, patch_size[0]*patch_size[1]))
+target = np.zeros((max_patches * image_num,))
+for img_id, img in enumerate(faces.images):
+    if img_id >= image_num:
+        break
 
-xt, yt = ds.test_data
+    patches_id = ((img_id * max_patches),((img_id+1) * max_patches))
+    
+    data[patches_id[0]:patches_id[1], :] = extract_patches_2d(
+        img, 
+        patch_size, 
+        max_patches=max_patches, 
+        random_state=rng
+    ).reshape((max_patches, patch_size[0]*patch_size[1]))
+    
+    target[patches_id[0]:patches_id[1]] = faces.target[img_id]
+
+output = one_hot_encode(target)
+
+data_size, input_size = data.shape
+data_size, output_size = output.shape
 
 
-y *= 0.1
-yt *= 0.1
 
-_, input_size, _, output_size = x.shape + y.shape
-
-batch_size = 40
+batch_size = 100
 seq_length = 50
+layer_size = 50
 
-layer_size = 100
+t_data = data[:batch_size].copy()
+t_output = output[:batch_size].copy()
+
+
 p = 0.1
 q = 0.1
 
+Wo = positive_random_norm(output_size, layer_size, p)
+fb_data = np.dot(output, Wo)
+t_fb_data = np.dot(t_output, Wo)
+
+
 c = NetConfig(
-    Dt = 0.5,
+    Dt = 1.0,
     SeqLength=seq_length,
     BatchSize=batch_size,
     FeedbackDelay=1,
     OutputTau=5.0,
-    YMeanStat = np.zeros((batch_size, seq_length, output_size))
+    YMeanStat = np.zeros((batch_size, seq_length, layer_size))
 )
 
 net = (
@@ -71,50 +97,26 @@ net = (
         FbStat = np.zeros((batch_size, seq_length, layer_size)),
         SynStat = np.zeros((batch_size, seq_length, input_size)),
     ),
-    LayerConfig(
-        Size = output_size,
-        TauSoma = 5.0,
-        TauSyn = 15.0,
-        TauSynFb = 5.0,
-        TauMean = 100.0,
-        P = 0.1,
-        Q = 0.1,
-        K = 1.0,
-        Omega = 1.0,
-        FbFactor = 1.0,
-        LearningRate=0.0001,
-        LateralLearnFactor=10.0,
-        Act = RELU,
-        W = positive_random_norm(layer_size, output_size, p),
-        B = np.ones((1, output_size)),
-        L = np.zeros((output_size, output_size)),
-        dW = np.zeros((layer_size, output_size)),
-        dB = np.zeros((1, output_size)),
-        dL = np.zeros((output_size, output_size)),
-        Am = np.zeros((1, output_size)),
-        UStat = np.zeros((batch_size, seq_length, output_size)),
-        AStat = np.zeros((batch_size, seq_length, output_size)),
-        FbStat = np.zeros((batch_size, seq_length, output_size)),
-        SynStat = np.zeros((batch_size, seq_length, layer_size)),
-    ),
 )
 
 l0 = net[0]
-l1 = net[1]
 
-trainStats, testStats = run_and_test_model(
-    1000,
+Winit = l0.get("W")
+
+
+trainStats, testStats = run_model(
+    2,
     net,
     c,
-    x,
-    y,
-    xt,
-    yt,
-    test_freq = 100
+    data,
+    fb_data,
+    t_data,
+    t_fb_data,
+    test_freq = 10
 )
-    
 
-st = testStats
+
+st = trainStats
 SquaredError = st.get("SquaredError")
 ClassificationError = st.get("ClassificationError")
 SignAgreement = st.get("SignAgreement")
