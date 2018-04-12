@@ -52,7 +52,7 @@ opt = SGDOpt((
 opt.init(W, L, Ldiag, Wo, Lo, Lodiag)
 
 
-epochs = 1500
+epochs = 100
 metrics = np.zeros((epochs, 7))
 Ch = np.zeros((epochs, input_size, layer_size))
 for e in xrange(epochs):

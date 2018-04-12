@@ -54,7 +54,9 @@ t_output = output[:batch_size].copy()
 
 
 p = 0.1
-q = 0.1
+q = 0.9
+k = 1.0
+omega = 1.0
 
 Wo = positive_random_norm(output_size, layer_size, p)
 fb_data = np.dot(output, Wo)
@@ -70,6 +72,10 @@ c = NetConfig(
     YMeanStat = np.zeros((batch_size, seq_length, layer_size))
 )
 
+# W = np.random.randn(input_size, layer_size)
+# W = W/(np.sum(np.abs(W), 0)/p)
+W = positive_random_norm(input_size, layer_size, p)
+
 net = (
     LayerConfig(
         Size = layer_size,
@@ -77,15 +83,15 @@ net = (
         TauSyn = 15.0,
         TauSynFb = 5.0,
         TauMean = 100.0,
-        P = 0.1,
-        Q = 0.1,
-        K = 1.0,
-        Omega = 1.0,
+        P = p,
+        Q = q,
+        K = k,
+        Omega = omega,
         FbFactor = 0.0,
-        LearningRate=0.0001,
-        LateralLearnFactor=100.0,
+        LearningRate=1e-06,
+        LateralLearnFactor=10.0,
         Act = RELU,
-        W = positive_random_norm(input_size, layer_size, p),
+        W = W, 
         B = np.ones((1, layer_size)),
         L = np.zeros((layer_size, layer_size)),
         dW = np.zeros((input_size, layer_size)),
@@ -105,7 +111,7 @@ Winit = l0.get("W")
 
 
 trainStats, testStats = run_model(
-    2,
+    20,
     net,
     c,
     data,

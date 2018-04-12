@@ -226,4 +226,9 @@ def positive_random_norm(fan_in, fan_out, p):
     m = m/(np.sum(m, 0)/p)
     return m
 
+def xavier_init(fan_in, fan_out, const=1.0):
+    low = -const * np.sqrt(6.0 / (fan_in + fan_out))
+    high = const * np.sqrt(6.0 / (fan_in + fan_out))
+    return (low + np.random.random((fan_in, fan_out)) * (high - low)).astype(np.float32)
+
 

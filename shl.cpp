@@ -365,7 +365,11 @@ struct TLayer {
 			FbStat.block(0, t*LayerSize, BatchSize, LayerSize) = fb;
 			SynStat.block(0, t*InputSize, BatchSize, InputSize) = ff; //Syn;
 		}
-		
+		if (s.TauMean > 1e-10) {
+			Am += c.Dt * ((A.colwise().mean() - Am) / s.TauMean);
+			// Am += c.Dt * (s.ApicalGain * A.colwise().mean() - Am) / s.TauMean;
+		}
+
 		if (learn && t == c.SeqLength-1) {
 			// dW += (
 			// 	(ff.transpose() * A).array().rowwise() 
