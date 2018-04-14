@@ -371,12 +371,13 @@ struct TLayer {
 		}
 
 		if (learn && t == c.SeqLength-1) {
-			// dW += (
-			// 	(ff.transpose() * A).array().rowwise() 
-			// 	  -  s.K * (W.colwise().sum().array() - s.P)
-			// ).matrix();
-
-			dW += ff.transpose() * A - W;
+			dW += (
+				(ff.transpose() * A).array().rowwise() 
+				  -  s.K * (W.colwise().sum().array() - s.P)
+			).matrix();
+			// std::cout << "DDDDDDDDDDWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW\n";
+			// std::cout << dW;
+			// dW += ff.transpose() * A - W;
 
 			dL += (
 				(A.transpose() * A).array() - s.P * s.P
@@ -394,11 +395,13 @@ struct TLayer {
 		WLearning.Update(&W, &dW, s.LearningRate);
 		BLearning.Update(&B, &dB, s.LearningRate);
 		LLearning.Update(&L, &dL, s.LearningRate * s.LateralLearnFactor);
-
+		
 		W = W.cwiseMax(0.0).cwiseMin(s.Omega);
 		L.diagonal() = TVector::Zero(LayerSize);
 		B = B.cwiseMax(0.0);
 		L = L.cwiseMax(0.0);
+
+
 	}
 
 	ui32 BatchSize;

@@ -16,7 +16,7 @@ rng = np.random.RandomState(12)
 
 faces = sklearn_datasets.fetch_olivetti_faces()
 image_num = faces.images.shape[0]
-image_num = 20  # TODO
+image_num = 50  # TODO
 
 patch_size = (20, 20)
 max_patches = 50
@@ -40,12 +40,18 @@ for img_id, img in enumerate(faces.images):
 
 output = one_hot_encode(target)
 
+
+# data = np.maximum(data - np.mean(data, 0), 0.0)
+
+data -= np.mean(data, axis=0)
+data /= np.std(data, axis=0)
+data *= 0.1
+
+
 data_size, input_size = data.shape
 data_size, output_size = output.shape
 
-
-
-batch_size = 100
+batch_size = data_size
 seq_length = 50
 layer_size = 50
 
@@ -53,18 +59,20 @@ t_data = data[:batch_size].copy()
 t_output = output[:batch_size].copy()
 
 
-p = 0.1
-q = 0.9
-k = 1.0
-omega = 1.0
 
+
+p, q = 0.01, 0.01
+omega = p/10.0
+k = 1.0
+
+W = positive_random_norm(input_size, layer_size, p)
 Wo = positive_random_norm(output_size, layer_size, p)
 fb_data = np.dot(output, Wo)
 t_fb_data = np.dot(t_output, Wo)
 
 
 c = NetConfig(
-    Dt = 1.0,
+    Dt = 0.25,
     SeqLength=seq_length,
     BatchSize=batch_size,
     FeedbackDelay=1,
@@ -74,21 +82,20 @@ c = NetConfig(
 
 # W = np.random.randn(input_size, layer_size)
 # W = W/(np.sum(np.abs(W), 0)/p)
-W = positive_random_norm(input_size, layer_size, p)
 
 net = (
     LayerConfig(
         Size = layer_size,
-        TauSoma = 5.0,
-        TauSyn = 15.0,
-        TauSynFb = 5.0,
-        TauMean = 100.0,
+        TauSoma = 1.0,
+        TauSyn = 1.0,
+        TauSynFb = 1.0,
+        TauMean = 1.0,
         P = p,
         Q = q,
         K = k,
         Omega = omega,
         FbFactor = 0.0,
-        LearningRate=1e-06,
+        LearningRate=0.001,
         LateralLearnFactor=10.0,
         Act = RELU,
         W = W, 
@@ -107,11 +114,11 @@ net = (
 
 l0 = net[0]
 
-Winit = l0.get("W")
+Winit = l0.get("W").copy()
 
 
 trainStats, testStats = run_model(
-    20,
+    100,
     net,
     c,
     data,
@@ -129,7 +136,8 @@ SignAgreement = st.get("SignAgreement")
 AverageActivity = st.get("AverageActivity")
 Sparsity = st.get("Sparsity")
 
-shl(l0.get("AStat")[0,:])
+shm(l0.get("AStat")[:,-1], l0.get("W"))
+
 
 
 ## need metrics
