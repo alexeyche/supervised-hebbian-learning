@@ -41,17 +41,17 @@ for img_id, img in enumerate(faces.images):
 output = one_hot_encode(target)
 
 
-# data = np.maximum(data - np.mean(data, 0), 0.0)
 
 data -= np.mean(data, axis=0)
 data /= np.std(data, axis=0)
 data *= 0.1
+data = np.maximum(data - np.mean(data, 0), 0.0)
 
 
 data_size, input_size = data.shape
 data_size, output_size = output.shape
 
-batch_size = data_size
+batch_size = 250
 seq_length = 50
 layer_size = 50
 
@@ -59,9 +59,7 @@ t_data = data[:batch_size].copy()
 t_output = output[:batch_size].copy()
 
 
-
-
-p, q = 0.01, 0.01
+p, q = 0.05, 0.2
 omega = p/10.0
 k = 1.0
 
@@ -118,7 +116,7 @@ Winit = l0.get("W").copy()
 
 
 trainStats, testStats = run_model(
-    100,
+    20,
     net,
     c,
     data,
@@ -132,9 +130,9 @@ trainStats, testStats = run_model(
 st = trainStats
 SquaredError = st.get("SquaredError")
 ClassificationError = st.get("ClassificationError")
-SignAgreement = st.get("SignAgreement")
 AverageActivity = st.get("AverageActivity")
 Sparsity = st.get("Sparsity")
+WeightNorm = st.get("WeightNorm")
 
 shm(l0.get("AStat")[:,-1], l0.get("W"))
 

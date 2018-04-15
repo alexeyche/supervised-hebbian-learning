@@ -27,18 +27,18 @@ def reshape_from_flat(m_raw, orig_size):
 class MatrixFlat(ct.Structure):
     @staticmethod
     def from_np(m):
-        assert m.dtype == np.float32, "Need float32 matrix"        
+        assert m.dtype == np.float64, "Need float32 matrix"        
         assert len(m.shape) == 2, "Need shape 2 for matrix"
 
         o = MatrixFlat()
-        o.Data = m.ctypes.data_as(ct.POINTER(ct.c_float))
+        o.Data = m.ctypes.data_as(ct.POINTER(ct.c_double))
         o.NRows = m.shape[0]
         o.NCols = m.shape[1]
         return o
 
 
     _fields_ = [
-        ("Data", ct.POINTER(ct.c_float)),
+        ("Data", ct.POINTER(ct.c_double)),
         ("NRows", ct.c_uint),
         ("NCols", ct.c_uint)
     ]
@@ -72,7 +72,7 @@ class ComplexStructure(ct.Structure):
                 self._np_values_dict[k] = (
                     v
                         .copy()
-                        .astype(np.float32),
+                        .astype(np.float64),
                     v.shape
                 )
             elif len(s) == 3:
@@ -80,7 +80,7 @@ class ComplexStructure(ct.Structure):
                     v
                         .copy()
                         .reshape(s[0], s[1]*s[2])
-                        .astype(np.float32),
+                        .astype(np.float64),
                     v.shape
                 )
             else:
@@ -143,9 +143,9 @@ class Stats(ComplexStructure):
     _fields_ = [
         ("SquaredError", MatrixFlat),
         ("ClassificationError", MatrixFlat),
-        ("SignAgreement", MatrixFlat),
         ("AverageActivity", MatrixFlat),
         ("Sparsity", MatrixFlat),
+        ("WeightNorm", MatrixFlat),
     ]
 
     @staticmethod
@@ -153,9 +153,9 @@ class Stats(ComplexStructure):
         return Stats(
             SquaredError = np.zeros((1, epochs)),
             ClassificationError = np.zeros((1, epochs)),
-            SignAgreement = np.zeros((1, epochs)),
             AverageActivity = np.zeros((1, epochs)),
             Sparsity = np.zeros((1, epochs)),
+            WeightNorm = np.zeros((1, epochs)),
         )
 
 _shllib.run_model.restype = ct.c_int

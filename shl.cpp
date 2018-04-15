@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 
 #define SHL_API extern
@@ -49,9 +50,9 @@ extern "C" {
     }\
 
 
-using TMatrix = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
-using TArray = Eigen::Array<float, Eigen::Dynamic, Eigen::Dynamic>;
-using TVector = Eigen::Matrix<float, 1, Eigen::Dynamic, Eigen::RowMajor>;
+using TMatrix = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+using TArray = Eigen::Array<double, Eigen::Dynamic, Eigen::Dynamic>;
+using TVector = Eigen::Matrix<double, 1, Eigen::Dynamic, Eigen::RowMajor>;
 
 #define CheckSizeMatch(m, mf) \
 	ENSURE(m.rows() == mf.NRows,  \
@@ -64,7 +65,7 @@ using TVector = Eigen::Matrix<float, 1, Eigen::Dynamic, Eigen::RowMajor>;
 
 
 struct TMatrixFlat {
-  	float* Data;
+  	double* Data;
   	ui32 NRows; 
   	ui32 NCols;
 
@@ -78,11 +79,11 @@ struct TMatrixFlat {
   		ENSURE(m.rows() == dst->NRows, "Rows are not aligned for saving eigen matrix, expected " << dst->NRows << ", got " << m.rows());
   		ENSURE(m.cols() == dst->NCols, "Cols are not aligned for saving eigen matrix, expected " << dst->NCols << ", got " << m.cols());
 
-  		memcpy(dst->Data, m.data(), sizeof(float) * dst->NRows * dst->NCols);
+  		memcpy(dst->Data, m.data(), sizeof(double) * dst->NRows * dst->NCols);
   	}
 };
 
-int sgn(float d) { 
+int sgn(double d) { 
 	if (d < -1e-10) { 
 		return -1; 
 	} else { 
@@ -103,20 +104,20 @@ TMatrix Relu(TMatrix x) {
 	return x.array().cwiseMax(0.0);
 }
 
-TMatrix Spike(TMatrix p, float dt) {
-	return p.unaryExpr([&](float pv) {
-		if (pv * dt >= static_cast<float>(std::rand())/RAND_MAX) {
-			return 1.0f;
+TMatrix Spike(TMatrix p, double dt) {
+	return p.unaryExpr([&](double pv) {
+		if (pv * dt >= static_cast<double>(std::rand())/RAND_MAX) {
+			return 1.0;
 		} else {
-			return 0.0f;
+			return 0.0;
 		}
 	});
 }
 
 TMatrix ReluDeriv(TMatrix x) {
 	return x.unaryExpr(
-		[](const float xv) { 
-			return xv > static_cast<float>(0.0) ? 1.0f : 0.0f;
+		[](const double xv) { 
+			return xv > static_cast<double>(0.0) ? 1.0 : 0.0;
 		}
 	);
 }
@@ -208,7 +209,7 @@ struct TLayerConfig {
 	TMatrixFlat SynStat;
 };
 
-using TOptimization = TSGDOptimization;
+using TOptimization = TAdadeltaOptimization;
 
 struct TData {
 	static constexpr ui32 TimeOfDataSpike = 5;
@@ -247,9 +248,9 @@ struct TData {
 struct TStatsRecord {
 	double SquaredError = 0.0;
 	double ClassificationError = 0.0;
-	double SignAgreement = 0.0;
 	double AverageActivity = 0.0;
 	double Sparsity = 0.0;
+	double WeightNorm = 0.0;
 };
 
 
@@ -375,8 +376,7 @@ struct TLayer {
 				(ff.transpose() * A).array().rowwise() 
 				  -  s.K * (W.colwise().sum().array() - s.P)
 			).matrix();
-			// std::cout << "DDDDDDDDDDWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW\n";
-			// std::cout << dW;
+
 			// dW += ff.transpose() * A - W;
 
 			dL += (
@@ -386,22 +386,22 @@ struct TLayer {
 			dB += (
 				A.array().square().colwise().sum() - s.Q * s.Q
 			).matrix();
+			
+			stats->WeightNorm += W.norm();
 		}
-	
+		
 		return A;
 	}
 
 	void ApplyGradients() {
 		WLearning.Update(&W, &dW, s.LearningRate);
-		BLearning.Update(&B, &dB, s.LearningRate);
+		BLearning.Update(&B, &dB, s.LearningRate * s.LateralLearnFactor);
 		LLearning.Update(&L, &dL, s.LearningRate * s.LateralLearnFactor);
 		
 		W = W.cwiseMax(0.0).cwiseMin(s.Omega);
 		L.diagonal() = TVector::Zero(LayerSize);
 		B = B.cwiseMax(0.0);
 		L = L.cwiseMax(0.0);
-
-
 	}
 
 	ui32 BatchSize;
@@ -562,16 +562,16 @@ struct TNet {
 struct TStats {
 	TMatrixFlat SquaredError;
 	TMatrixFlat ClassificationError;
-	TMatrixFlat SignAgreement;
 	TMatrixFlat AverageActivity;
 	TMatrixFlat Sparsity;
+	TMatrixFlat WeightNorm;
 
 	void WriteStats(TStatsRecord rec, ui32 epoch, ui32 numBatches, ui32 seqLength) {
 		SquaredError.Data[epoch] = rec.SquaredError / numBatches;
 		ClassificationError.Data[epoch] = rec.ClassificationError / numBatches;
-		SignAgreement.Data[epoch] = rec.SignAgreement / numBatches / seqLength;
 		AverageActivity.Data[epoch] = rec.AverageActivity / numBatches / seqLength;
 		Sparsity.Data[epoch] = rec.Sparsity / numBatches / seqLength;
+		WeightNorm.Data[epoch] = rec.WeightNorm / numBatches;
 	}
 };
 
@@ -630,7 +630,7 @@ int run_model(
 
 				testStats.WriteStats(testStatsRec, e, testNumBatches, c.SeqLength);
 
-				std::cout << "Epoch: " << e << ", " << 1000.0 * float(clock() - beginTime)/ CLOCKS_PER_SEC << "ms\n";
+				std::cout << "Epoch: " << e << ", " << 1000.0 * double(clock() - beginTime)/ CLOCKS_PER_SEC << "ms\n";
 				std::cout << "\tTrain; sq.error: " << trainStatsRec.SquaredError / trainNumBatches;
 				std::cout << " class.error: " << trainStatsRec.ClassificationError / trainNumBatches << "\n"; 
 				std::cout << "\tTest; sq.error: " << testStatsRec.SquaredError / testNumBatches;

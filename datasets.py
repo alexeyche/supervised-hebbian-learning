@@ -297,3 +297,97 @@ class XorDataset(Dataset):
     def test_data(self):        
         return self._x_v, self._y_v
 
+
+
+
+class FacesDataset(Dataset):
+    def __init__(self, batch_size, max_patches=50, patch_size=(20, 20), images_num=None, rng=None):
+        from sklearn import datasets as sklearn_datasets
+        from sklearn.feature_extraction.image import extract_patches_2d
+
+        self._train_batch_size = batch_size
+        self._test_batch_size = batch_size
+
+        rng = rng if not rng is None else np.random.RandomState(12)
+
+        faces = sklearn_datasets.fetch_olivetti_faces()
+        images_num = images_num if not images_num is None else faces.images.shape[0]
+
+        x_v = np.zeros((max_patches * images_num, patch_size[0]*patch_size[1]))
+        classes = np.zeros((max_patches * images_num,))
+        
+        for img_id, img in enumerate(faces.images):
+            if img_id >= images_num:
+                break
+
+            patches_id = ((img_id * max_patches),((img_id+1) * max_patches))
+            
+            x_v[patches_id[0]:patches_id[1], :] = extract_patches_2d(
+                img, 
+                patch_size, 
+                max_patches=max_patches, 
+                random_state=rng
+            ).reshape((max_patches, patch_size[0]*patch_size[1]))
+            
+            classes[patches_id[0]:patches_id[1]] = faces.target[img_id]
+        
+        y_v = one_hot_encode(classes)
+        
+        test_prop = x_v.shape[0]/5
+
+        self._xt_v = x_v
+        self._yt_v = y_v
+
+        self._x_v = x_v
+        self._y_v = y_v
+        self._i = 0
+
+    @property
+    def train_shape(self):
+        return (self._train_batch_size, self._x_v.shape[1]), (self._train_batch_size, self._y_v.shape[1])
+
+    @property
+    def test_shape(self):
+        return (self._test_batch_size, self._xt_v.shape[1]), (self._test_batch_size, self._yt_v.shape[1])
+
+    def next_train_batch(self):
+        tup_to_return = (
+            self._x_v[self._i * self._train_batch_size:(self._i + 1) * self._train_batch_size], 
+            self._y_v[self._i * self._train_batch_size:(self._i + 1) * self._train_batch_size]
+        )
+        self._i += 1
+        if self._i >= self.train_batches_num:
+            self._i = 0
+        return tup_to_return
+        
+    def next_test_batch(self):
+        tup_to_return = (
+            self._xt_v[self._i * self._test_batch_size:(self._i + 1) * self._test_batch_size], 
+            self._yt_v[self._i * self._test_batch_size:(self._i + 1) * self._test_batch_size]
+        )
+        self._i += 1
+        if self._i >= self.test_batches_num:
+            self._i = 0
+        return tup_to_return
+
+    @property
+    def train_batch_size(self):
+        return self._train_batch_size
+
+    @property
+    def test_batch_size(self):
+        return self._test_batch_size
+
+    @property
+    def task_type(self):
+        return TaskType.CLASSIFICATION
+
+    @property
+    def train_data(self):        
+        return self._x_v, self._y_v
+    
+    @property
+    def test_data(self):        
+        return self._xt_v, self._yt_v
+
+
