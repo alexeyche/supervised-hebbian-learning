@@ -299,6 +299,27 @@ class XorDataset(Dataset):
 
 
 
+def whiten(X,fudge=1E-18):
+   # the matrix X should be observations-by-components
+
+   # get the covariance matrix
+   Xcov = np.dot(X.T,X)
+
+   # eigenvalue decomposition of the covariance matrix
+   d, V = np.linalg.eigh(Xcov)
+
+   # a fudge factor can be used so that eigenvectors associated with
+   # small eigenvalues do not get overamplified.
+   D = np.diag(1. / np.sqrt(d+fudge))
+
+   # whitening matrix
+   W = np.dot(np.dot(V, D), V.T)
+
+   # multiply by the whitening matrix
+   X_white = np.dot(X, W)
+
+   return X_white, W
+
 
 class FacesDataset(Dataset):
     def __init__(self, batch_size, max_patches=50, patch_size=(20, 20), images_num=None, rng=None):
@@ -342,13 +363,20 @@ class FacesDataset(Dataset):
         self._y_v = y_v
         self._i = 0
 
+        self._x_v -= np.mean(self._x_v, axis=0)
+        self._x_v /= np.std(self._x_v, axis=0)
+        self._x_v *= 0.1
+        # self._x_v = whiten(self._x_v)[0]
+        
     @property
     def train_shape(self):
-        return (self._train_batch_size, self._x_v.shape[1]), (self._train_batch_size, self._y_v.shape[1])
+        # return (self._train_batch_size, self._x_v.shape[1]), (self._train_batch_size, self._y_v.shape[1])
+        return self._x_v.shape, self._y_v.shape
 
     @property
     def test_shape(self):
-        return (self._test_batch_size, self._xt_v.shape[1]), (self._test_batch_size, self._yt_v.shape[1])
+        # return (self._test_batch_size, self._xt_v.shape[1]), (self._test_batch_size, self._yt_v.shape[1])
+        return self._xt_v.shape, self._yt_v.shape
 
     def next_train_batch(self):
         tup_to_return = (
