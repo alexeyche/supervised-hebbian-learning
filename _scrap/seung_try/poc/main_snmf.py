@@ -82,7 +82,7 @@ p = 0.5
 W = W/(np.sum(np.abs(W), 0)/p)
 
 
-opt = SGDOpt((0.01, 0.001))
+opt = SGDOpt((0.001, 0.0001))
 opt.init(W, M)
 
 tau_m = 100.0
