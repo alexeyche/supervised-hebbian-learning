@@ -5,8 +5,21 @@ import math
 import collections
 import pylab
 from scipy import signal
+import pandas as pd
 
 DEFAULT_FIG_SIZE = (7,7)
+
+def generate_ts(n, limit_low=0.0, limit_high=1.0, params=(0.1, 0.3, 3, 5,6)):
+    my_data = np.random.normal(0, params[0], n) \
+              + np.abs(np.random.normal(0, params[1], n) \
+                       * np.sin(np.linspace(0, params[2]*np.pi, n)) ) \
+              + np.sin(np.linspace(0, params[3]*np.pi, n))**2 \
+              + np.sin(np.linspace(1, params[4]*np.pi, n))**2
+
+    scaling = (limit_high - limit_low) / (max(my_data) - min(my_data))
+    my_data = my_data * scaling
+    my_data = my_data + (limit_low - min(my_data))
+    return my_data
 
 
 def plot_wrapper(fn):

@@ -12,10 +12,10 @@ batch_size = 10
 input_size = 15
 layer_size = 30
 output_size = 5
-dt = 0.1
+dt = 0.05
 
 ## Act
-psi_max = 1.0
+psi_max = 0.1
 k = 0.5
 beta = 5.0
 thr = 1.0
@@ -93,20 +93,33 @@ net = [
 	Layer(batch_size, layer_size, output_size)
 ]
 
+Winit = [l.W.copy() for l in net]
+
 def net_run(t, data, gE_nudge, gI_nudge):
 	for li, l in enumerate(net):
-		gE_nudge_l = np.dot(net[li+1].A, net[li+1].W.T) if li < len(net)-1 else gE_nudge
-		gI_nudge_l = 2.0
+		gE_nudge_l = (
+			# 2.0*np.maximum(np.dot(net[li+1].A, net[li+1].W.T), 0.0)
+			1.0*(sigmoid(100.0*np.maximum(np.dot(net[li+1].A, net[li+1].W.T), 0.0)) - 0.5)
+			if li < len(net)-1 else gE_nudge
+		)
+		Wrec = np.dot(net[li].W.T, net[li].W)
+		np.fill_diagonal(Wrec, 0.0)
+		gI_nudge_l = (
+			np.maximum(np.dot(net[li].A,  Wrec), 0.0)
+			if li < len(net)-1 else gI_nudge
+		)
+
 		data_l = data if li == 0 else net[li-1].A
 		
 		l.run(t, data_l, gE_nudge_l, gI_nudge_l)
 
 
-for e in xrange(1000):
+for e in xrange(5000):
 	for t in xrange(num_iters): net_run(t, data[t], gE_nudge[t], gI_nudge[t])
 	
+	# net[-1].W += 0.01 * net[-1].dW
 	for l in net:
-		l.W += 0.05 * l.dW
+		l.W += 300.0 * l.dW
 		l.reset_state()
 
 	if e % 100 == 0:		
