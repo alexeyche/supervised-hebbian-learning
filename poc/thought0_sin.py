@@ -9,8 +9,8 @@ from poc.model import *
 np.random.seed(12)
 
 # Setup
-input_size = 100
-layer_size = 50
+input_size = 1
+layer_size = 1
 output_size = 1
 batch_size = 1
 
@@ -19,16 +19,13 @@ weight_factor = 0.1
 num_iters = 100
 
 
-x = np.zeros((num_iters, batch_size, input_size))
+# x = np.transpose(np.asarray(((np.sin(np.linspace(0, 20.0, num_iters) + 0.25*np.pi),), )), (2,1,0))
+# y = np.transpose(np.asarray(((np.sin(np.linspace(0, 20.0, num_iters)),), )), (2,1,0))
 
-x_isi = 10
-for ni in xrange(0, num_iters, x_isi):
-    x[ni, 0, ni % input_size] = 1.0
-y = np.zeros((num_iters, batch_size, output_size))
-y[(25, 50 ,75),0,0] = 1.0
+x = 0.25 * np.ones((num_iters, batch_size, input_size))
+y = 0.75 * np.ones((num_iters, batch_size, input_size))
 
-y = smooth_batch_matrix(y, sigma=0.005)
-x = smooth_batch_matrix(x, sigma=0.005)
+
 
 # act = lambda x: np.maximum(1.0/(1.0 + np.exp(-x)) - 0.5, 0.0)
 act = lambda x: x
@@ -38,40 +35,28 @@ net = Net(
         num_iters,
         batch_size,
         input_size,
-        layer_size,
+        output_size,
         output_size,
         act=act,
         weight_factor=weight_factor,
         dt=dt
     ),
-    Layer(
-        num_iters,
-        batch_size,
-        layer_size,
-        output_size,
-        output_size,
-        act=act,
-        weight_factor=weight_factor,
-        dt=dt
-    )
 )
 
 
+l = net[0]
 
-net[0].Wfb = net[1].W.T.copy()
-l0, l1 = net.layers
+l.W[0,0] = 0.2
+l.Wfb[0,0] = 1.0
 
-l1.Wfb[0,0] = 0.2
-
-for epoch in xrange(10000):
+for epoch in xrange(1000):
     for t in xrange(num_iters): net.run(t, x[t], y[t], 1.0)
 
     # net[1].dW = np.zeros(net[1].dW.shape)
 
     dW_norm = np.zeros(net.size)
 
-    l0.W += 0.05 * l0.dW
-    l1.W += 0.1 * l1.dW
+    l.W += 0.1 * l.dW
 
     for li, l in enumerate(net.layers):
         if li < net.size-1:
@@ -82,7 +67,7 @@ for epoch in xrange(10000):
 
 
 
-    if epoch % 100 == 0:
+    if epoch % 10 == 0:
         for t in xrange(num_iters): net.run(t, x[t], y[t], 0.0)
         [l.reset_state() for li, l in enumerate(net.layers)]
 
