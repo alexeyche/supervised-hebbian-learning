@@ -44,7 +44,7 @@ class Layer(object):
         ff = np.dot(xt, s.W)
         fb = np.dot(yt, s.Wfb)
 
-        s.u += s.dt * (ff + fb - s.u)
+        s.u += s.dt * ((ff + fb)/2.0 - s.u)
         s.a[:] = s.act(s.u)
 
         s.dW += np.dot(xt.T, fb - ff)/s.num_iters

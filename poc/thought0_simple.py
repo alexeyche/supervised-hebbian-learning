@@ -49,7 +49,7 @@ l = net[0]
 l.W[0,0] = 0.2
 l.Wfb[0,0] = 1.0
 
-for epoch in xrange(1000):
+for epoch in xrange(4000):
     for t in xrange(num_iters): net.run(t, x[t], y[t], 1.0)
 
     # net[1].dW = np.zeros(net[1].dW.shape)
@@ -71,7 +71,7 @@ for epoch in xrange(1000):
         for t in xrange(num_iters): net.run(t, x[t], y[t], 0.0)
         [l.reset_state() for li, l in enumerate(net.layers)]
 
-        mse = np.linalg.norm(net[-1].ah - y)
+        mse = np.linalg.norm(net[-1].ah[-1] - y)
 
         print "Epoch {}, {:.4f}, {}, {}".format(
             epoch,
