@@ -37,6 +37,8 @@ data = np.zeros((num_iters, batch_size, input_size))
 for ni in xrange(0, num_iters, 5):
 	data[ni, :, (ni/7) % input_size] = 1.0
 
+
+
 gI_nudge = np.ones((num_iters, batch_size, output_size)) * 2.0
 gE_nudge = np.zeros((num_iters, batch_size, output_size)) 
 gE_nudge[(25, 50, 75), :, :] = 1.0
@@ -117,6 +119,7 @@ def net_run(t, data, gE_nudge, gI_nudge):
 for e in xrange(5000):
 	for t in xrange(num_iters): net_run(t, data[t], gE_nudge[t], gI_nudge[t])
 	
+
 	# net[-1].W += 0.01 * net[-1].dW
 	for l in net:
 		l.W += 300.0 * l.dW

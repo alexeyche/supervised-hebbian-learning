@@ -2,3 +2,4 @@ eigen*
 *.so
 *.o
 *.pyc
+.idea
