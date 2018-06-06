@@ -83,8 +83,8 @@ for epoch in xrange(10000):
 
 
     if epoch % 100 == 0:
-        for t in xrange(num_iters): net.run(t, x[t], y[t], 0.0)
-        [l.reset_state() for li, l in enumerate(net.layers)]
+        # for t in xrange(num_iters): net.run(t, x[t], y[t], 0.0)
+        # [l.reset_state() for li, l in enumerate(net.layers)]
 
         mse = np.linalg.norm(net[-1].ah - y)
 

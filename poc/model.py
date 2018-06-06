@@ -40,11 +40,18 @@ class Layer(object):
         s.dWfb = np.zeros(s.Wfb.shape)
 
 
-    def run(s, t, xt, yt):
+    def run(s, t, xt, yt, no_feedback=False):
         ff = np.dot(xt, s.W)
         fb = np.dot(yt, s.Wfb)
 
-        s.u += s.dt * ((ff + fb)/2.0 - s.u)
+        if no_feedback:
+            du = ff
+        else:
+            du = (ff + fb)/2.0
+
+        # du = ff + fb * (fb - ff)
+
+        s.u += s.dt * (du - s.u)
         s.a[:] = s.act(s.u)
 
         s.dW += np.dot(xt.T, fb - ff)/s.num_iters
@@ -54,7 +61,7 @@ class Layer(object):
         s.uh[t, :] = s.u.copy()
         s.ffh[t, :] = ff
         s.fbh[t, :] = fb
-        s.eh[t, :] = np.linalg.norm(fb-ff, axis=1, keepdims=True)
+        s.eh[t, :] = np.linalg.norm(fb - ff, axis=1, keepdims=True)
 
 
 
@@ -62,12 +69,17 @@ class Net(object):
     def __init__(s, *layers):
         s.layers = layers
 
-    def run(s, t, xt, yt, fb_factor):
+    def run(s, t, xt, yt, test=False):
         for li, l in enumerate(s.layers):
             x_l = s.layers[li - 1].a if li > 0 else xt
-            y_l = s.layers[li + 1].a if li < len(s.layers) - 1 else fb_factor * yt
+            y_l = s.layers[li + 1].a if li < len(s.layers) - 1 else yt
 
-            l.run(t, x_l, y_l)
+            no_feedback = False
+            if test and li == len(s.layers) - 1:
+                y_l = np.zeros(yt.shape)
+                no_feedback = True
+
+            l.run(t, x_l, y_l, no_feedback)
 
     @property
     def size(s):
