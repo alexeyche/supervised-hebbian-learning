@@ -36,6 +36,16 @@ net = Net(
         batch_size=batch_size,
         input_size=input_size,
         layer_size=layer_size,
+        output_size=layer_size,
+        act=act,
+        weight_factor=weight_factor,
+        dt=dt
+    ),
+    Layer(
+        num_iters=num_iters,
+        batch_size=batch_size,
+        input_size=layer_size,
+        layer_size=layer_size,
         output_size=output_size,
         act=act,
         weight_factor=weight_factor,
@@ -54,17 +64,18 @@ net = Net(
 )
 
 
-l0, l1 = net.layers
+l0, l1, l2 = net.layers
 
 net[-1].Wfb = np.eye(*net[-1].Wfb.shape)
 
-for epoch in xrange(1000):
+for epoch in xrange(5000):
     for t in xrange(num_iters): net.run(t, x, y, test=False)
 
     # net[1].dW = np.zeros(net[1].dW.shape)
 
-    l0.W += 0.01 * l0.dW
+    l0.W += 0.1 * l0.dW
     l1.W += 0.1 * l1.dW
+    l2.W += 0.1 * l2.dW
 
     dW_norm = np.zeros(net.size)
     error_mean = np.zeros(net.size)
