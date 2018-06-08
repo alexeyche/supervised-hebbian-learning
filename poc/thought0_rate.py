@@ -64,11 +64,16 @@ net = Net(
 )
 
 
+
 l0, l1, l2 = net.layers
 
 net[-1].Wfb = np.eye(*net[-1].Wfb.shape)
+for li, l in enumerate(net.layers):
+    if li < net.size-1:
+        net[li].Wfb = net[li+1].W.T.copy()
 
-for epoch in xrange(5000):
+
+for epoch in xrange(1):
     for t in xrange(num_iters): net.run(t, x, y, test=False)
 
     # net[1].dW = np.zeros(net[1].dW.shape)
@@ -100,4 +105,5 @@ for epoch in xrange(5000):
             ",".join(["{:.4f}".format(em) for em in error_mean]),
             ",".join(["{:.4f}".format(dW_norm_l) for dW_norm_l in dW_norm]),
         )
+
 
