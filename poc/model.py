@@ -1,6 +1,11 @@
 
 import numpy as np
 
+def tanh(x):
+    return (1.0 - np.exp(-2*x))/(1.0 + np.exp(-2*x))
+
+def tanh_derivative(x):
+    return (1 + tanh(x))*(1 - tanh(x))
 
 class Layer(object):
     def __init__(

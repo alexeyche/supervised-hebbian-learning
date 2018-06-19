@@ -93,6 +93,10 @@ for e in xrange(10000):
     net[1][0] += 0.05 * np.dot(a0.T, fb1 - ff1) / batch_size
     net[2][0] += 0.05 * np.dot(a1.T, fb2 - ff2) / batch_size
 
+    for li in xrange(len(net)):
+        if li < len(net) - 1:
+            net[li][1] = net[li + 1][0].T.copy()
+
     if e % 100 == 0:
         fb0, fb1 = None, None
         for i in xrange(5):
